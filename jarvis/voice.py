@@ -14,7 +14,7 @@ class VoiceHandler:
     def __init__(self):
         self.openai = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
         self.elevenlabs = AsyncElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
-        self.voice_id = os.environ.get("ELEVENLABS_VOICE_ID", "cgSgspJ2msm6clMCkdW9")
+        self.voice_id = os.environ.get("ELEVENLABS_VOICE_ID", "EkK5I93UQWFDigLMpZcX")
 
     async def transcribe(self, audio_data: bytes, content_type: str = "audio/ogg") -> str:
         """Transcribe audio using OpenAI gpt-4o-transcribe."""
