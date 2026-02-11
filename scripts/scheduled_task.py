@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -17,22 +18,42 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from jarvis.cron import CronManager
 
 
-async def run_claude_task(task_name: str, task_description: str, claude_path: str) -> str:
-    """Run a task through Claude Code."""
+RESPONSE_SCHEMA = json.dumps({
+    "type": "object",
+    "properties": {
+        "conversation_finished": {
+            "type": "boolean",
+            "description": "Whether this topic/conversation is wrapped up",
+        },
+        "skipped": {
+            "type": "boolean",
+            "description": "Set to true if the task is no longer relevant based on context",
+        },
+    },
+    "required": ["conversation_finished"],
+})
+
+
+async def run_claude_task(task_name: str, task_description: str, claude_path: str) -> dict:
+    """Run a task through Claude Code. Returns parsed structured output."""
     prompt = f"""Scheduled task: {task_name}
 
 {task_description}
 
 CRITICAL RULES FOR SCHEDULED TASKS:
-- Your ENTIRE output will be sent directly to the user via WhatsApp as-is
-- ONLY output the final message for the user - nothing else
-- Do the "before responding" checklist (chat-history, memories, news.md) for context, but NEVER mention or output anything about those steps
-- Do NOT output any internal thinking, planning, status updates, or meta-commentary
-- Do NOT say things like "let me check..." or "now I'll send..." or "no news entries to process"
-- Just do whatever work you need silently using tools, then output ONLY the final WhatsApp message
-- Stay in character as jarvis"""
+- Use the send-message skill to send messages to the user via WhatsApp
+- Do the "before responding" checklist (chat-history, memories, news.md) for context
+- Stay in character as jarvis
+- If the task is no longer relevant based on recent context, set skipped: true
+
+CONTEXT-AWARENESS (VERY IMPORTANT):
+- ALWAYS check chat-history (last 30+ messages) BEFORE composing your message
+- If this is a reminder about something (laundry, tasks, etc): check if the user already did it recently. If they did, DO NOT remind them again. Instead either skip (skipped: true) or acknowledge it's done.
+- If you're about to suggest an activity (running, workout, etc): check if the user already did it in the last 1-2 days. Don't suggest something they just did.
+- Your message must be informed by recent context. Never send a generic message that ignores what happened in the last 24-48 hours."""
 
     project_root = Path(__file__).parent.parent
+    user_phone = os.environ.get("USER_PHONE_NUMBER", "")
 
     # Disallowed tools (same as main runner - block dangerous operations)
     disallowed_tools = [
@@ -47,123 +68,56 @@ CRITICAL RULES FOR SCHEDULED TASKS:
     args = [
         claude_path,
         "-p", prompt,
-        "--output-format", "text",
+        "--output-format", "json",
+        "--json-schema", RESPONSE_SCHEMA,
         "--permission-mode", "bypassPermissions",
         "--disallowedTools", *disallowed_tools,
     ]
+
+    env = {**os.environ, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+    if user_phone:
+        env["JARVIS_CHAT_RECIPIENT"] = user_phone
 
     process = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(project_root),
+        env=env,
     )
 
     stdout, stderr = await process.communicate()
 
     if process.returncode != 0:
-        return f"Task failed: {stderr.decode()}"
+        raise RuntimeError(f"Task failed: {stderr.decode()}")
 
-    return stdout.decode()
-
-
-def write_to_news(task_name: str, result: str) -> bool:
-    """Write task result to news.md for the next conversation to pick up."""
-    from datetime import datetime
-
-    news_file = Path(__file__).parent.parent / "news.md"
-
-    if not news_file.exists():
-        return False
-
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    # Format the news entry
-    entry = f"""
-### {timestamp}
-**task:** {task_name}
-{result}
-
-"""
-
-    # Append to news.md
-    with open(news_file, "a") as f:
-        f.write(entry)
-
-    return True
-
-
-async def send_whatsapp_notification(task_name: str, result: str) -> bool:
-    """Send task result via WhatsApp. Returns True if sent successfully."""
-    user_phone = os.environ.get("USER_PHONE_NUMBER")
-    if not user_phone:
-        return False
-
-    # Check required WhatsApp env vars
-    required_vars = ["WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_VERIFY_TOKEN"]
-    if not all(os.environ.get(var) for var in required_vars):
-        return False
-
+    raw_output = stdout.decode()
     try:
-        from jarvis.whatsapp import WhatsAppClient
-        from jarvis.message_store import MessageStore
-        from jarvis.session_logger import SessionLogger
-
-        project_root = Path(__file__).parent.parent
-        client = WhatsAppClient()
-        message_store = MessageStore(project_root / "data")
-        session_logger = SessionLogger(project_root / "data" / "sessions")
-
-        # Truncate result if too long for WhatsApp (max ~4096 chars)
-        max_len = 3500
-        if len(result) > max_len:
-            result = result[:max_len] + "\n\n... (truncated)"
-
-        message = result
-        send_result = await client.send_text(user_phone, message)
-        await client.close()
-
-        # Store message for reply context lookups
-        if msg_id := send_result.get("messages", [{}])[0].get("id"):
-            message_store.store(msg_id, message, "jarvis")
-
-        # Log to session history so it shows up in chat-history lookups
-        session_logger.log_message(
-            user_id=user_phone,
-            user_name="scheduled",
-            message=f"[scheduled task: {task_name}]",
-            response=message,
-        )
-
-        return True
-    except Exception as e:
-        print(f"WhatsApp notification failed: {e}", file=sys.stderr)
-        return False
+        output = json.loads(raw_output)
+        result = output.get("structured_output") or output.get("result") or output
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except json.JSONDecodeError:
+                return {"conversation_finished": True, "skipped": False}
+        return result
+    except json.JSONDecodeError:
+        return {"conversation_finished": True, "skipped": False}
 
 
 async def main_async(args):
     """Async main function."""
-    # Run the task
     result = await run_claude_task(args.name, args.description, args.claude_path)
 
-    wrote_news = False
-    sent = False
+    if result.get("skipped"):
+        print(f"Task '{args.name}' skipped (no longer relevant based on context)")
+        if args.one_shot:
+            cron = CronManager()
+            cron.remove_task(args.name)
+            print(f"One-shot task '{args.name}' removed from crontab")
+        return
 
-    # Only notify if not silent
-    if not args.silent:
-        # Write to news.md for async pickup by next conversation
-        wrote_news = write_to_news(args.name, result)
-
-        # Also send via WhatsApp for immediate notification
-        sent = await send_whatsapp_notification(args.name, result)
-
-    # Always print to stdout (for logging)
-    print(f"Task '{args.name}' completed:")
-    print(result)
-    if wrote_news:
-        print("(Written to news.md)")
-    if sent:
-        print("(Sent via WhatsApp)")
+    print(f"Task '{args.name}' completed")
 
     # Remove if one-shot
     if args.one_shot:
@@ -177,7 +131,6 @@ def main():
     parser.add_argument("name", help="Task name")
     parser.add_argument("description", help="Task description")
     parser.add_argument("--one-shot", action="store_true", help="Remove task after running")
-    parser.add_argument("--silent", action="store_true", help="Don't send notifications (news.md or WhatsApp)")
     parser.add_argument("--claude-path", required=True, help="Path to claude CLI")
     args = parser.parse_args()
 

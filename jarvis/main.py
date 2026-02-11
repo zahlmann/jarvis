@@ -1,9 +1,11 @@
 """FastAPI webhook server for WhatsApp messages."""
 
+import asyncio
 import logging
 import os
 import tempfile
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -32,6 +34,16 @@ message_store: MessageStore
 
 # In-memory set for deduplication (prevents race conditions with parallel webhooks)
 _processing_messages: set[str] = set()
+
+# Per-user locks and pending message queues
+_user_locks: dict[str, asyncio.Lock] = {}
+_pending_messages: dict[str, list[dict]] = {}
+
+
+def _get_user_lock(user_id: str) -> asyncio.Lock:
+    if user_id not in _user_locks:
+        _user_locks[user_id] = asyncio.Lock()
+    return _user_locks[user_id]
 
 
 @asynccontextmanager
@@ -103,7 +115,6 @@ async def handle_webhook(request: Request):
 
     # Process in background to respond quickly to webhook
     # (WhatsApp expects quick response)
-    import asyncio
     asyncio.create_task(process_message(message_info))
 
     return {"status": "ok"}
@@ -116,17 +127,13 @@ async def process_message(message_info: dict):
     incoming_message_id = message_info.get("message_id")
 
     # Deduplicate: use in-memory set to prevent race conditions
-    # The old check (message_store.is_processed) had a race condition:
-    # two parallel requests could both pass the check before either stored
     if incoming_message_id:
         if incoming_message_id in _processing_messages:
             logger.info(f"Skipping duplicate message (in-flight): {incoming_message_id}")
             return
-        # Also check persistent store for messages from previous server runs
         if message_store.is_processed(incoming_message_id):
             logger.info(f"Skipping duplicate message (already processed): {incoming_message_id}")
             return
-        # Mark as processing IMMEDIATELY to prevent race conditions
         _processing_messages.add(incoming_message_id)
 
     # Check if this is a reply to another message
@@ -139,10 +146,9 @@ async def process_message(message_info: dict):
 
     image_path = None
     try:
-        # Handle different message types: reaction, voice, text, image
+        # Handle different message types
         if message_info["type"] == "reaction" and message_info.get("reaction_emoji"):
             logger.info("Processing reaction message")
-            # Get the message that was reacted to
             reacted_to_id = message_info.get("reaction_message_id")
             reacted_to_content = None
             if reacted_to_id:
@@ -150,36 +156,30 @@ async def process_message(message_info: dict):
                 if stored:
                     reacted_to_content = stored["content"]
                     logger.info(f"Reaction to message: {reacted_to_content[:50]}...")
-
             emoji = message_info["reaction_emoji"]
             if reacted_to_content:
-                user_message = f"[reacted with {emoji} to: \"{reacted_to_content}\"]"
+                user_message = f'[reacted with {emoji} to: "{reacted_to_content}"]'
             else:
                 user_message = f"[reacted with {emoji}]"
             is_voice = False
         elif message_info["type"] == "audio" and message_info["audio_id"]:
             logger.info("Processing voice message")
-            # Download and transcribe audio
             audio_data, content_type = await whatsapp.download_media(message_info["audio_id"])
             user_message = await voice.transcribe(audio_data, content_type)
             is_voice = True
             logger.info(f"Transcribed: {user_message[:100]}...")
         elif message_info["type"] == "image" and message_info["image_id"]:
             logger.info("Processing image message")
-            # Download image and save to temp file
             image_data, content_type = await whatsapp.download_media(message_info["image_id"])
-            # Determine extension from content type
             ext = ".jpg"
             if "png" in content_type:
                 ext = ".png"
             elif "webp" in content_type:
                 ext = ".webp"
-            # Save to temp file
             with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
                 f.write(image_data)
                 image_path = f.name
             logger.info(f"Saved image to {image_path}")
-            # Use caption as message, or generic prompt if no caption
             user_message = message_info.get("image_caption") or "what do you see in this image?"
             is_voice = False
         elif message_info["text"]:
@@ -194,67 +194,75 @@ async def process_message(message_info: dict):
         if incoming_message_id:
             message_store.store(incoming_message_id, user_message, user_name or user_id)
 
-        # Log incoming message to session immediately (so it's visible even if Claude hangs)
+        # Log incoming message to session immediately
         claude.session_logger.log_incoming(user_id, user_name or "user", user_message, is_voice)
 
-        # Run Claude
-        logger.info(f"Running Claude for: {user_message[:50]}...")
-        response = await claude.run(
-            message=user_message,
-            user_id=user_id,
-            user_name=user_name,
-            is_voice=is_voice,
-            image_path=image_path,
-            quoted_message=quoted_message,
-        )
+        # Try to acquire per-user lock
+        lock = _get_user_lock(user_id)
+        if lock.locked():
+            # Claude is already running for this user — queue the message
+            logger.info(f"Claude busy for {user_id}, queueing message")
+            if user_id not in _pending_messages:
+                _pending_messages[user_id] = []
+            _pending_messages[user_id].append({
+                "message": user_message,
+                "is_voice": is_voice,
+                "image_path": image_path,
+                "quoted_message": quoted_message,
+                "timestamp": datetime.now().strftime("%H:%M"),
+            })
+            # Don't clean up image_path here — it'll be used when the queue is processed
+            image_path = None
+            return
 
-        # Track if we need to restart after sending response
-        needs_restart = response.code_changes
+        async with lock:
+            # Run Claude
+            logger.info(f"Running Claude for: {user_message[:50]}...")
+            response = await claude.run(
+                message=user_message,
+                user_id=user_id,
+                user_name=user_name,
+                is_voice=is_voice,
+                image_path=image_path,
+                quoted_message=quoted_message,
+            )
 
-        # Send response
-        if response.send_voice and response.voice_text:
-            logger.info("Generating voice response")
-            # Generate TTS
-            _, audio_path = await voice.text_to_speech(response.voice_text)
+            needs_restart = response.code_changes
 
-            try:
-                # Upload and send audio
-                media_id = await whatsapp.upload_media(audio_path, "audio/mpeg")
-                send_result = await whatsapp.send_audio_by_id(user_id, media_id)
-                # Store outgoing voice message for reply context
-                if msg_id := send_result.get("messages", [{}])[0].get("id"):
-                    message_store.store(msg_id, f"[voice] {response.voice_text}", "jarvis")
-                logger.info("Voice response sent")
-            finally:
-                # Cleanup temp file
-                Path(audio_path).unlink(missing_ok=True)
+            # Process any queued messages
+            while _pending_messages.get(user_id):
+                queued = _pending_messages.pop(user_id)
+                logger.info(f"Processing {len(queued)} queued message(s) for {user_id}")
 
-            # Also send text if it's different from voice text
-            if response.response_text and response.response_text != response.voice_text:
-                send_result = await whatsapp.send_text(user_id, response.response_text)
-                if msg_id := send_result.get("messages", [{}])[0].get("id"):
-                    message_store.store(msg_id, response.response_text, "jarvis")
-        else:
-            # Send text response
-            if response.response_text:
-                send_result = await whatsapp.send_text(user_id, response.response_text)
-                # Store outgoing message for reply context
-                if msg_id := send_result.get("messages", [{}])[0].get("id"):
-                    message_store.store(msg_id, response.response_text, "jarvis")
-                logger.info("Text response sent")
-            else:
-                logger.info("No response text to send (intentional silence)")
+                # Combine queued messages into a single prompt
+                parts = ["[Messages received while you were working]\n"]
+                for msg in queued:
+                    parts.append(f"({msg['timestamp']}) {msg['message']}")
 
-        # Restart if code changes were made (after response is sent)
-        if needs_restart:
-            logger.info("Code changes detected, exiting for systemd restart")
-            os._exit(0)
+                combined_prompt = "\n".join(parts)
+
+                response = await claude.run(
+                    message=combined_prompt,
+                    user_id=user_id,
+                    user_name=user_name,
+                )
+
+                # Clean up any queued image paths
+                for msg in queued:
+                    if msg.get("image_path"):
+                        Path(msg["image_path"]).unlink(missing_ok=True)
+
+                if response.code_changes:
+                    needs_restart = True
+
+            # Restart if code changes were made
+            if needs_restart:
+                logger.info("Code changes detected, exiting for systemd restart")
+                os._exit(0)
 
     except Exception as e:
         logger.exception(f"Error processing message: {e}")
-        # Log error response to session (incoming message was already logged)
-        error_msg = f"{type(e).__name__}: {str(e)}"
-        claude.session_logger.log_response(user_id, f"[ERROR]: {error_msg}")
+        claude.session_logger.log_response(user_id, f"[ERROR]: {type(e).__name__}: {str(e)}")
         try:
             await whatsapp.send_text(user_id, "oops, something went wrong on my end. give me a sec and try again?")
         except Exception:
@@ -263,7 +271,7 @@ async def process_message(message_info: dict):
         # Clean up temp image file if created
         if image_path:
             Path(image_path).unlink(missing_ok=True)
-        # Remove from in-flight set (keep in message_store for reply context)
+        # Remove from in-flight set
         if incoming_message_id:
             _processing_messages.discard(incoming_message_id)
 

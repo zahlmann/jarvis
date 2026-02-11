@@ -19,16 +19,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 RESPONSE_SCHEMA = json.dumps({
     "type": "object",
     "properties": {
-        "response_text": {
-            "type": "string",
-            "description": "Message to send (empty string if choosing silence)",
-        },
         "conversation_finished": {
             "type": "boolean",
             "description": "True if not sending a message, False if starting conversation",
         },
     },
-    "required": ["response_text", "conversation_finished"],
+    "required": ["conversation_finished"],
 })
 
 
@@ -52,6 +48,7 @@ def find_claude_cli() -> str | None:
 async def run_proactive_checkin(claude_path: str) -> dict:
     """Run the proactive check-in task through Claude."""
     project_root = Path(__file__).parent.parent
+    user_phone = os.environ.get("USER_PHONE_NUMBER", "")
 
     prompt = """You are running the proactive-checkin skill. Follow the SKILL.md instructions exactly.
 
@@ -64,6 +61,7 @@ JOB 1 - REACH OUT:
 4. Check the current time - don't message between midnight and 8am
 5. Decide if there's something worth reaching out about
 6. The user explicitly wants to hear from you more often - lean toward messaging if you have anything at all to say
+7. Use the send-message skill to send messages — be a friend texting, not a bot composing one perfect message. send multiple short messages if that feels more natural.
 
 JOB 2 - HOUSEKEEPING:
 1. List all memories and look for duplicates, outdated info, or things to merge
@@ -97,12 +95,16 @@ Output your decision via the structured response."""
 
     timeout_seconds = 1800  # 30 minutes max
 
+    env = {**os.environ, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+    if user_phone:
+        env["JARVIS_CHAT_RECIPIENT"] = user_phone
+
     process = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(project_root),
-        env={**os.environ, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
+        env=env,
     )
 
     try:
@@ -113,45 +115,24 @@ Output your decision via the structured response."""
         print(f"Proactive check-in timed out after {timeout_seconds}s, killing process", file=sys.stderr)
         process.kill()
         await process.wait()
-        return {"response_text": "", "conversation_finished": True}
+        return {"conversation_finished": True}
 
     if process.returncode != 0:
         error = stderr.decode() if stderr else "Unknown error"
         print(f"Proactive check-in failed (exit {process.returncode}): {error}", file=sys.stderr)
-        return {"response_text": "", "conversation_finished": True}
+        return {"conversation_finished": True}
 
     # Parse output
     try:
         output = json.loads(stdout.decode())
         result = output.get("structured_output") or output.get("result") or output
         if isinstance(result, str):
-            result = json.loads(result) if result else {"response_text": "", "conversation_finished": True}
+            result = json.loads(result) if result else {"conversation_finished": True}
         return result
     except json.JSONDecodeError:
         raw = stdout.decode()[:200] if stdout else "empty"
         print(f"Proactive check-in returned invalid JSON: {raw}", file=sys.stderr)
-        return {"response_text": "", "conversation_finished": True}
-
-
-async def send_whatsapp_message(message: str) -> bool:
-    """Send message via WhatsApp."""
-    user_phone = os.environ.get("USER_PHONE_NUMBER")
-    if not user_phone:
-        return False
-
-    required_vars = ["WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_VERIFY_TOKEN"]
-    if not all(os.environ.get(var) for var in required_vars):
-        return False
-
-    try:
-        from jarvis.whatsapp import WhatsAppClient
-        client = WhatsAppClient()
-        await client.send_text(user_phone, message)
-        await client.close()
-        return True
-    except Exception as e:
-        print(f"WhatsApp send failed: {e}", file=sys.stderr)
-        return False
+        return {"conversation_finished": True}
 
 
 async def main():
@@ -164,19 +145,10 @@ async def main():
     print("Running proactive check-in...")
     result = await run_proactive_checkin(claude_path)
 
-    response_text = result.get("response_text", "").strip()
-
-    if response_text:
-        # Claude decided to send a message
-        print(f"Sending message: {response_text[:100]}...")
-        sent = await send_whatsapp_message(response_text)
-        if sent:
-            print("Message sent successfully")
-        else:
-            print("Failed to send message", file=sys.stderr)
+    if result.get("conversation_finished"):
+        print("Check-in complete (no conversation started or chose silence)")
     else:
-        # Claude decided to stay silent
-        print("No message to send (chose silence)")
+        print("Check-in complete (conversation started via send-message skill)")
 
 
 if __name__ == "__main__":

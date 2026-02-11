@@ -69,7 +69,7 @@ Every check-in, do a quick maintenance pass:
 5. *Do housekeeping* (memory cleanup + instructions check)
 
 6. *Decide on messaging* - is there something worth reaching out about?
-   - if YES: compose a brief, natural message
+   - if YES: use the send-message skill to text the user. be a friend texting — send multiple short messages if that feels more natural, not one polished paragraph.
    - if NO: log that you checked
 
 7. *Log your decision* to `data/proactive-log.md`
@@ -79,12 +79,10 @@ Every check-in, do a quick maintenance pass:
 
 ## Output format
 
-If you decide to message:
-- set `response_text` to your message (keep it brief, casual, like texting)
+If you messaged the user (via send-message skill):
 - set `conversation_finished: false` (you're starting a convo)
 
-If you decide NOT to message:
-- set `response_text` to empty string ""
+If you decided NOT to message:
 - set `conversation_finished: true`
 
 ## Activity log format
