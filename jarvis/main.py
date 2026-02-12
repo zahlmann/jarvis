@@ -236,8 +236,12 @@ async def process_message(message_info: dict):
 
                 # Combine queued messages into a single prompt
                 parts = ["[Messages received while you were working]\n"]
+                queued_image_path = None
                 for msg in queued:
                     parts.append(f"({msg['timestamp']}) {msg['message']}")
+                    # Use the last image path if any queued message has one
+                    if msg.get("image_path"):
+                        queued_image_path = msg["image_path"]
 
                 combined_prompt = "\n".join(parts)
 
