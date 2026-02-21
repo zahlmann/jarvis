@@ -1,39 +1,11 @@
-# Environment
-.env
-.env.*
-!.env.example
+/.env
+/.env.*
+!/.env.example
 
-# Python
-__pycache__/
-*.py[cod]
-*.so
-.venv/
-venv/
+/data/*
+!/data/.gitkeep
 
-# uv
-.python-version
-uv.lock
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Build
-*.egg-info/
-
-# Data
-data/
-
-# Temp files
-*.tmp
+/.cache/
+/bin/
+/scripts/jarvis-supervisor.sh
 *.log
-
-# Personal service file
-jarvis.service
-
-# Local tools and projects (not pushed to github)
-local/

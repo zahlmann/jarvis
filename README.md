@@ -1,85 +1,105 @@
-# jarvis
+# jarvis-phi
 
-A WhatsApp AI agent powered by [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Voice messages, persistent memory, self-scheduling via cronjobs, and extensible skills — all through WhatsApp.
+Go-native Telegram wrapper around `phi`.
 
-## How it works
-
-Jarvis is a FastAPI webhook server that receives WhatsApp messages and routes them to Claude Code in headless mode. Claude reads the project's `.claude/CLAUDE.md` for personality, skills, and instructions — then responds via WhatsApp. It can schedule itself for later, remember things across conversations, and send/receive voice messages.
-
-The key idea: **run `claude` in this repo and it will help you set everything up.** The CLAUDE.md contains setup instructions that Claude follows to walk you through configuration.
-
-## Prerequisites
-
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/)
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
-- A WhatsApp Business API account ([Meta Business Dashboard](https://business.facebook.com/))
-- A server with a public URL (for the webhook)
-
-## Setup
-
-1. Clone the repo:
-   ```bash
-   git clone https://github.com/zahlmann/jarvis.git
-   cd jarvis
-   ```
-
-2. Copy the env template and fill in your API keys:
-   ```bash
-   cp .env.example .env
-   ```
-
-3. Run `claude` in the repo — it will guide you through the rest:
-   ```bash
-   claude
-   ```
-
-4. Start the server:
-   ```bash
-   uv run python -m jarvis.main
-   ```
-
-5. Set up your WhatsApp webhook in the Meta dashboard pointing to `https://your-domain.com/webhook`
-
-> **Important: Subscribe your WABA to receive inbound messages**
->
-> Even after adding your webhook URL in the dashboard, incoming messages won't arrive until you explicitly subscribe your WhatsApp Business Account (WABA) to your app. This step is often missed because it's not obvious in the UI.
->
-> Without this, outbound messages work fine, but inbound webhooks (replies) will be silent.
->
-> ```bash
-> curl -X POST "https://graph.facebook.com/v21.0/{YOUR_WABA_ID}/subscribed_apps" \
->   -H "Authorization: Bearer {YOUR_SYSTEM_USER_ACCESS_TOKEN}"
-> ```
->
-> Use your WABA ID (Business Account ID), not the Phone Number ID. You should get `{"success": true}`.
-
-> **Exposing your server publicly**
->
-> The webhook needs a public HTTPS URL. If you're running jarvis on a home server or a machine without a domain, you can use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) to expose it — no port forwarding or static IP needed:
-> ```bash
-> cloudflared tunnel --url http://localhost:8000
-> ```
-> Then use the generated URL as your webhook in the Meta dashboard.
-
-### Optional: run as a systemd service
+## Quick Start
 
 ```bash
-cp jarvis.service.example jarvis.service
-# Edit jarvis.service with your paths and username
-sudo cp jarvis.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now jarvis
+git clone <your-repo-url> jarvis-phi
+cd jarvis-phi
+./wake-jarvis.sh
 ```
 
-## Features
+`wake-jarvis.sh` will:
 
-- **Voice**: transcription (OpenAI) and text-to-speech (ElevenLabs) with emotion tags
-- **Memory**: persistent semantic memory with embeddings, automatic cleanup
-- **Scheduling**: self-modifying cronjobs — set reminders, recurring tasks, proactive check-ins
-- **Skills**: extensible skill system (chat history, memory lookup, scheduling, skill creator)
-- **Session resume**: conversations carry context across messages
+- ask for required Telegram + ChatGPT auth setup
+- ask optional voice-transcription setup (OpenAI key)
+- ask optional voice-reply setup (ElevenLabs key)
+- auto-write `.env`
+- build the server binary
+- install reboot autostart + crash restart via a background supervisor
+- start Jarvis immediately
 
-## Customization
+## What it does
 
-The personality and behavior are defined in `.claude/CLAUDE.md`. Edit it to change how jarvis talks, what it prioritizes, and how it responds. You can also add new skills in `.claude/skills/`.
+- Telegram webhook ingress (`/telegram/webhook`)
+- `phi`-backed agent runtime (ChatGPT subscription mode via `PHI_AUTH_MODE=chatgpt`)
+- Full `phi` coding tools enabled (`write/read/edit/bash`)
+- Explicit-send contract: agent must call `jarvisctl telegram ...`; final assistant text is not auto-delivered
+- Internal scheduler with persistent jobs + internal `heartbeat`
+- Heartbeat policy: every 30 minutes with jitter `-10m..+10m`; skipped if busy through window
+- Native Bring integration (`jarvisctl bring list|add|remove|complete`)
+- Structured JSONL logs for inbound, stream/tool events, scheduler decisions, and outbound CLI sends
+
+## Env
+
+Copy `.env.example` to `.env` and set at least:
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_WEBHOOK_SECRET`
+- `PHI_AUTH_MODE=chatgpt`
+- `PHI_CHATGPT_ACCESS_TOKEN` (or preexisting `~/.phi/chatgpt_tokens.json`)
+- `JARVIS_PHI_DEFAULT_CHAT_ID` (required for heartbeat routing)
+
+Feature toggles:
+
+- `JARVIS_PHI_TRANSCRIPTION_ENABLED` controls inbound voice transcription handling
+- `JARVIS_PHI_VOICE_REPLY_ENABLED` controls `jarvisctl telegram send-voice`
+
+If using voice:
+
+- `OPENAI_API_KEY` (voice transcription)
+- `ELEVENLABS_API_KEY` (+ optional `ELEVENLABS_VOICE_ID`)
+
+If using Bring:
+
+- `BRING_EMAIL`
+- `BRING_PASSWORD`
+- optional `BRING_LIST_UUID` or `BRING_LIST_NAME`
+
+## Commands
+
+Run server:
+
+```bash
+GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/server
+```
+
+Run CLI:
+
+```bash
+GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/jarvisctl --help
+```
+
+Examples:
+
+```bash
+# Send message
+GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/jarvisctl telegram send-text --chat 123456 --text "hello"
+
+# Add scheduled prompt
+GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/jarvisctl schedule add \
+  --id morning-check --chat 123456 --prompt "do a quick check-in" --mode cron --cron "0 9 * * *" --tz Europe/Vienna
+
+# List schedules
+GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/jarvisctl schedule list
+
+# Bring list and add
+GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/jarvisctl bring list
+GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/jarvisctl bring add "Milk" "Eggs" "Butter:unsalted"
+```
+
+## Data layout
+
+- `data/logs/events-YYYY-MM-DD.jsonl`
+- `data/messages/dedup.json`
+- `data/messages/index.json`
+- `data/sessions/chat-<id>.jsonl`
+- `data/scheduler/jobs.json`
+- `data/heartbeat/state.json`
+
+## Tests
+
+```bash
+GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go test ./...
+```
