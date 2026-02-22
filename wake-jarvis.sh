@@ -6,6 +6,7 @@ ENV_FILE="$ROOT_DIR/.env"
 ENV_EXAMPLE_FILE="$ROOT_DIR/.env.example"
 BIN_DIR="$ROOT_DIR/bin"
 BIN_PATH="$BIN_DIR/jarvis-phi-server"
+JARVISCTL_BIN_PATH="$BIN_DIR/jarvisctl"
 SCRIPT_DIR="$ROOT_DIR/scripts"
 SUPERVISOR_PATH="$SCRIPT_DIR/jarvis-supervisor.sh"
 LOG_DIR="$ROOT_DIR/data/logs"
@@ -251,16 +252,17 @@ if [[ -z "$(get_env_value "JARVIS_PHI_DATA_DIR")" ]]; then
   upsert_env "JARVIS_PHI_DATA_DIR" "./data"
 fi
 if [[ -z "$(get_env_value "JARVIS_PHI_TOOL_ROOT")" ]]; then
-  upsert_env "JARVIS_PHI_TOOL_ROOT" "../"
+  upsert_env "JARVIS_PHI_TOOL_ROOT" "./"
 fi
 if [[ -z "$(get_env_value "JARVIS_PHI_MODEL")" ]]; then
   upsert_env "JARVIS_PHI_MODEL" "gpt-5.3-codex"
 fi
 
-printf "Building jarvis server binary...\n"
+printf "Building jarvis binaries...\n"
 (
   cd "$ROOT_DIR"
   go build -o "$BIN_PATH" ./cmd/server
+  go build -o "$JARVISCTL_BIN_PATH" ./cmd/jarvisctl
 )
 
 cat > "$SUPERVISOR_PATH" <<SUPERVISOR
@@ -268,6 +270,7 @@ cat > "$SUPERVISOR_PATH" <<SUPERVISOR
 set -euo pipefail
 ROOT_DIR="$ROOT_DIR"
 cd "\$ROOT_DIR"
+export PATH="\$ROOT_DIR/bin:\$PATH"
 mkdir -p "\$ROOT_DIR/data/logs"
 while true; do
   "\$ROOT_DIR/bin/jarvis-phi-server" >> "\$ROOT_DIR/data/logs/server.out.log" 2>&1

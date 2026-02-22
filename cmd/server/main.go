@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("config error: %v", err)
 	}
+	ensureBinPath()
 
 	logger, err := logstore.New(filepath.Join(cfg.DataDir, "logs"))
 	if err != nil {
@@ -266,4 +268,30 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func ensureBinPath() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+
+	binDir := filepath.Join(cwd, "bin")
+	info, err := os.Stat(binDir)
+	if err != nil || !info.IsDir() {
+		return
+	}
+
+	current := os.Getenv("PATH")
+	for _, entry := range filepath.SplitList(current) {
+		if filepath.Clean(entry) == binDir {
+			return
+		}
+	}
+
+	if current == "" {
+		_ = os.Setenv("PATH", binDir)
+		return
+	}
+	_ = os.Setenv("PATH", binDir+string(os.PathListSeparator)+current)
 }
