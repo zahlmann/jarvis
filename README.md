@@ -35,7 +35,7 @@ When `wake-jarvis.sh` asks for the public URL, use this Cloudflare Zero Trust fl
 - Telegram webhook ingress (`/telegram/webhook`)
 - `phi`-backed agent runtime (ChatGPT subscription mode via `PHI_AUTH_MODE=chatgpt`)
 - Full `phi` coding tools enabled (`write/read/edit/bash`)
-- Explicit-send contract: agent must call `jarvisctl telegram ...`; final assistant text is not auto-delivered
+- Explicit-send contract: agent must call `./bin/jarvisctl telegram ...` from repo root; final assistant text is not auto-delivered
 - Internal scheduler with persistent jobs + internal `heartbeat`
 - Heartbeat policy: every 30 minutes with jitter `-10m..+10m`; skipped if busy through window
 - Default [Bring app](https://www.getbring.com/) integration (`jarvisctl bring list|add|remove|complete`)
@@ -92,6 +92,15 @@ Run CLI:
 ```bash
 go run ./cmd/jarvisctl --help
 ```
+
+Agent runtime canonical command form (used by `phi` tool execution):
+
+```bash
+cd /path/to/jarvis
+./bin/jarvisctl telegram send-text --chat 123456 --text "hello"
+```
+
+Use exact supported Telegram CLI flags/subcommands. Variants like `telegram send` or `--chat-id` are invalid.
 
 Webhook setup helper:
 
