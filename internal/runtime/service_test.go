@@ -1,6 +1,15 @@
 package runtime
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/zahlmann/jarvis-phi/internal/config"
+	"github.com/zahlmann/jarvis-phi/internal/logstore"
+	"github.com/zahlmann/phi/coding/sdk"
+)
 
 func TestTelegramSendSucceeded(t *testing.T) {
 	t.Parallel()
@@ -55,5 +64,99 @@ func TestTelegramSendSucceeded(t *testing.T) {
 				t.Fatalf("telegramSendSucceeded() = %v, want %v", got, tc.expect)
 			}
 		})
+	}
+}
+
+func TestExpireIdleSessionLockedClosesAndResetsHistory(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestService(t)
+	now := time.Now().UTC()
+	chatID := int64(42)
+	path := svc.sessionPath(chatID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("{\"type\":\"message\"}\n"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	unsubCalled := false
+	cs := &chatSession{
+		chatID:          chatID,
+		session:         &sdk.AgentSession{},
+		unsubscribe:     func() { unsubCalled = true },
+		lastInteraction: now.Add(-(sessionIdleTimeout + time.Minute)),
+	}
+
+	cs.mu.Lock()
+	svc.expireIdleSessionLocked(cs, now)
+	cs.mu.Unlock()
+
+	if cs.session != nil {
+		t.Fatalf("expected session to be cleared")
+	}
+	if cs.unsubscribe != nil {
+		t.Fatalf("expected unsubscribe callback to be cleared")
+	}
+	if !unsubCalled {
+		t.Fatalf("expected unsubscribe callback to be invoked")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected session file to be removed, stat err=%v", err)
+	}
+}
+
+func TestExpireIdleSessionLockedNoopBeforeTimeout(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestService(t)
+	now := time.Now().UTC()
+	chatID := int64(43)
+	path := svc.sessionPath(chatID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("{\"type\":\"message\"}\n"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	unsubCalled := false
+	cs := &chatSession{
+		chatID:          chatID,
+		session:         &sdk.AgentSession{},
+		unsubscribe:     func() { unsubCalled = true },
+		lastInteraction: now.Add(-(sessionIdleTimeout - time.Minute)),
+	}
+
+	cs.mu.Lock()
+	svc.expireIdleSessionLocked(cs, now)
+	cs.mu.Unlock()
+
+	if cs.session == nil {
+		t.Fatalf("expected session to remain active before timeout")
+	}
+	if cs.unsubscribe == nil {
+		t.Fatalf("expected unsubscribe callback to remain set before timeout")
+	}
+	if unsubCalled {
+		t.Fatalf("did not expect unsubscribe callback to be invoked")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected session file to remain, stat err=%v", err)
+	}
+}
+
+func newTestService(t *testing.T) *Service {
+	t.Helper()
+
+	root := t.TempDir()
+	logger, err := logstore.New(filepath.Join(root, "logs"))
+	if err != nil {
+		t.Fatalf("create logstore: %v", err)
+	}
+	return &Service{
+		cfg:    config.Config{DataDir: filepath.Join(root, "data")},
+		logger: logger,
 	}
 }

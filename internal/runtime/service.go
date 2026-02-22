@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -22,6 +24,8 @@ import (
 )
 
 var okTruePattern = regexp.MustCompile(`"ok"\s*:\s*true`)
+
+const sessionIdleTimeout = 30 * time.Minute
 
 type PromptInput struct {
 	ChatID   int64
@@ -51,9 +55,10 @@ type Service struct {
 type chatSession struct {
 	chatID int64
 
-	mu      sync.Mutex
-	running bool
-	pending []PromptInput
+	mu              sync.Mutex
+	running         bool
+	pending         []PromptInput
+	lastInteraction time.Time
 
 	session     *sdk.AgentSession
 	unsubscribe func()
@@ -80,7 +85,10 @@ func (s *Service) Enqueue(input PromptInput) {
 	}
 
 	cs := s.getOrCreateChatSession(input.ChatID)
+	now := time.Now().UTC()
 	cs.mu.Lock()
+	s.expireIdleSessionLocked(cs, now)
+	cs.lastInteraction = now
 	if cs.running {
 		cs.pending = append(cs.pending, input)
 		queued := len(cs.pending)
@@ -194,8 +202,8 @@ func (s *Service) ensureSession(cs *chatSession) (*sdk.AgentSession, error) {
 		return cs.session, nil
 	}
 
-	sessionID := fmt.Sprintf("chat-%d", cs.chatID)
-	sessionPath := filepath.Join(s.cfg.DataDir, "sessions", sessionID+".jsonl")
+	sessionID := sessionIDForChat(cs.chatID)
+	sessionPath := s.sessionPath(cs.chatID)
 	var mgr session.Manager
 	fileMgr, err := session.NewFileManager(sessionID, sessionPath)
 	if err != nil {
@@ -231,6 +239,45 @@ func (s *Service) ensureSession(cs *chatSession) (*sdk.AgentSession, error) {
 	})
 
 	return cs.session, nil
+}
+
+func (s *Service) expireIdleSessionLocked(cs *chatSession, now time.Time) {
+	if cs == nil || cs.running || cs.session == nil || cs.lastInteraction.IsZero() {
+		return
+	}
+	idle := now.Sub(cs.lastInteraction)
+	if idle < sessionIdleTimeout {
+		return
+	}
+
+	sessionID := sessionIDForChat(cs.chatID)
+	if cs.unsubscribe != nil {
+		cs.unsubscribe()
+		cs.unsubscribe = nil
+	}
+	cs.session = nil
+
+	sessionPath := s.sessionPath(cs.chatID)
+	if err := os.Remove(sessionPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_ = s.logger.Write("runtime", "session_close_cleanup_error", map[string]any{
+			"chat_id":    cs.chatID,
+			"session_id": sessionID,
+			"error":      err.Error(),
+		})
+	}
+	_ = s.logger.Write("runtime", "session_closed_idle", map[string]any{
+		"chat_id":      cs.chatID,
+		"session_id":   sessionID,
+		"idle_seconds": int64(idle.Seconds()),
+	})
+}
+
+func (s *Service) sessionPath(chatID int64) string {
+	return filepath.Join(s.cfg.DataDir, "sessions", sessionIDForChat(chatID)+".jsonl")
+}
+
+func sessionIDForChat(chatID int64) string {
+	return fmt.Sprintf("chat-%d", chatID)
 }
 
 func (s *Service) getOrCreateChatSession(chatID int64) *chatSession {
