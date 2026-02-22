@@ -145,7 +145,36 @@ latest_inbound_telegram_line() {
     printf ""
     return
   fi
-  grep -hE '"component":"telegram".*"event":"inbound_message".*"chat_id":-?[0-9]+' "${files[@]}" | tail -n 1 || true
+  awk '
+    /"component":"telegram"/ && /"event":"inbound_message"/ && /"chat_id":-?[0-9]+/ {
+      latest = $0
+    }
+    END {
+      if (latest != "") {
+        print latest
+      }
+    }
+  ' "${files[@]}"
+}
+
+unique_inbound_telegram_chat_ids() {
+  local files=("$LOG_DIR"/events-*.jsonl)
+  if [[ ! -e "${files[0]}" ]]; then
+    return 0
+  fi
+  awk '
+    /"component":"telegram"/ && /"event":"inbound_message"/ {
+      if (match($0, /"chat_id":-?[0-9]+/)) {
+        chat_id = substr($0, RSTART + 10, RLENGTH - 10)
+        seen[chat_id] = 1
+      }
+    }
+    END {
+      for (chat_id in seen) {
+        print chat_id
+      }
+    }
+  ' "${files[@]}" | sort -n
 }
 
 extract_chat_id_from_line() {
@@ -380,6 +409,10 @@ if [[ -z "$(get_env_value "JARVIS_PHI_DEFAULT_CHAT_ID")" ]]; then
     printf "Set JARVIS_PHI_DEFAULT_CHAT_ID later after inbound messages appear in %s.\n" "$LOG_DIR/events-YYYY-MM-DD.jsonl"
   else
     baseline_line="$(latest_inbound_telegram_line)"
+    chat_detect_wait_seconds="${JARVIS_SETUP_CHAT_DETECT_TIMEOUT_SEC:-8}"
+    if ! [[ "$chat_detect_wait_seconds" =~ ^[0-9]+$ ]]; then
+      chat_detect_wait_seconds=8
+    fi
     printf "Send any message to your bot in Telegram now.\n"
     read -r -p "Press Enter after sending it (or type skip): " detect_input
     detect_input="$(echo "$detect_input" | tr '[:upper:]' '[:lower:]' | xargs)"
@@ -387,7 +420,8 @@ if [[ -z "$(get_env_value "JARVIS_PHI_DEFAULT_CHAT_ID")" ]]; then
       printf "Skipped automatic chat id detection. Heartbeat remains disabled.\n"
     else
       detected_chat_id=""
-      for _ in $(seq 1 30); do
+      detected_source="new"
+      for (( i = 0; i < chat_detect_wait_seconds; i++ )); do
         latest_line="$(latest_inbound_telegram_line)"
         if [[ -n "$latest_line" && "$latest_line" != "$baseline_line" ]]; then
           detected_chat_id="$(extract_chat_id_from_line "$latest_line")"
@@ -395,17 +429,31 @@ if [[ -z "$(get_env_value "JARVIS_PHI_DEFAULT_CHAT_ID")" ]]; then
             break
           fi
         fi
-        sleep 2
+        sleep 1
       done
+
+      mapfile -t known_chat_ids < <(unique_inbound_telegram_chat_ids)
+      if [[ -z "$detected_chat_id" && "${#known_chat_ids[@]}" -eq 1 ]]; then
+        detected_chat_id="${known_chat_ids[0]}"
+        detected_source="history"
+      fi
 
       if [[ -n "$detected_chat_id" ]]; then
         upsert_env "JARVIS_PHI_DEFAULT_CHAT_ID" "$detected_chat_id"
         upsert_env "JARVIS_PHI_HEARTBEAT_ENABLED" "true"
-        printf "Detected chat id %s and enabled heartbeat.\n" "$detected_chat_id"
+        if [[ "$detected_source" == "history" ]]; then
+          printf "No new inbound message detected within %s seconds.\n" "$chat_detect_wait_seconds"
+          printf "Used existing inbound logs and detected chat id %s; enabled heartbeat.\n" "$detected_chat_id"
+        else
+          printf "Detected chat id %s and enabled heartbeat.\n" "$detected_chat_id"
+        fi
         printf "Restart Jarvis to apply heartbeat routing with the new chat id.\n"
       else
         upsert_env "JARVIS_PHI_HEARTBEAT_ENABLED" "false"
-        printf "Could not detect a new inbound Telegram message in logs within 60 seconds.\n"
+        printf "Could not detect a new inbound Telegram message in logs within %s seconds.\n" "$chat_detect_wait_seconds"
+        if [[ "${#known_chat_ids[@]}" -gt 1 ]]; then
+          printf "Found multiple chat ids in existing inbound logs (%s).\n" "$(IFS=,; echo "${known_chat_ids[*]}")"
+        fi
         printf "Heartbeat stays disabled; rerun setup after messaging the bot or set JARVIS_PHI_DEFAULT_CHAT_ID manually.\n"
       fi
     fi
