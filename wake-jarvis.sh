@@ -139,6 +139,20 @@ ask_yes_no() {
   done
 }
 
+latest_inbound_telegram_line() {
+  local files=("$LOG_DIR"/events-*.jsonl)
+  if [[ ! -e "${files[0]}" ]]; then
+    printf ""
+    return
+  fi
+  grep -hE '"component":"telegram".*"event":"inbound_message".*"chat_id":-?[0-9]+' "${files[@]}" | tail -n 1 || true
+}
+
+extract_chat_id_from_line() {
+  local line="$1"
+  printf "%s\n" "$line" | sed -nE 's/.*"chat_id":(-?[0-9]+).*/\1/p' | tail -n 1
+}
+
 generate_secret() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -hex 24
@@ -219,14 +233,7 @@ else
 fi
 
 if [[ -z "$(get_env_value "JARVIS_PHI_DEFAULT_CHAT_ID")" ]]; then
-  read -r -p "Your Telegram chat id for heartbeat reminders (optional, press Enter to skip): " default_chat_id
-  default_chat_id="$(trim "$default_chat_id")"
-  if [[ -n "$default_chat_id" ]]; then
-    upsert_env "JARVIS_PHI_DEFAULT_CHAT_ID" "$default_chat_id"
-    upsert_env "JARVIS_PHI_HEARTBEAT_ENABLED" "true"
-  else
-    upsert_env "JARVIS_PHI_HEARTBEAT_ENABLED" "false"
-  fi
+  upsert_env "JARVIS_PHI_HEARTBEAT_ENABLED" "false"
 fi
 
 if ask_yes_no "Do you want to set up Bring shopping list integration now?" "n"; then
@@ -334,6 +341,45 @@ if [[ -n "$webhook_base_url" ]]; then
   else
     printf "Webhook registration failed. You can retry later with:\n"
     printf "  go run ./cmd/jarvisctl telegram set-webhook --url %s\n" "$webhook_url"
+  fi
+fi
+
+if [[ -z "$(get_env_value "JARVIS_PHI_DEFAULT_CHAT_ID")" ]]; then
+  printf "\nHeartbeat chat detection:\n"
+  if [[ "$webhook_configured" != "true" ]]; then
+    printf "Skipping automatic chat id detection because the webhook is not configured yet.\n"
+    printf "Set JARVIS_PHI_DEFAULT_CHAT_ID later after inbound messages appear in %s.\n" "$LOG_DIR/events-YYYY-MM-DD.jsonl"
+  else
+    baseline_line="$(latest_inbound_telegram_line)"
+    printf "Send any message to your bot in Telegram now.\n"
+    read -r -p "Press Enter after sending it (or type skip): " detect_input
+    detect_input="$(echo "$detect_input" | tr '[:upper:]' '[:lower:]' | xargs)"
+    if [[ "$detect_input" == "skip" ]]; then
+      printf "Skipped automatic chat id detection. Heartbeat remains disabled.\n"
+    else
+      detected_chat_id=""
+      for _ in $(seq 1 30); do
+        latest_line="$(latest_inbound_telegram_line)"
+        if [[ -n "$latest_line" && "$latest_line" != "$baseline_line" ]]; then
+          detected_chat_id="$(extract_chat_id_from_line "$latest_line")"
+          if [[ -n "$detected_chat_id" ]]; then
+            break
+          fi
+        fi
+        sleep 2
+      done
+
+      if [[ -n "$detected_chat_id" ]]; then
+        upsert_env "JARVIS_PHI_DEFAULT_CHAT_ID" "$detected_chat_id"
+        upsert_env "JARVIS_PHI_HEARTBEAT_ENABLED" "true"
+        printf "Detected chat id %s and enabled heartbeat.\n" "$detected_chat_id"
+        printf "Restart Jarvis to apply heartbeat routing with the new chat id.\n"
+      else
+        upsert_env "JARVIS_PHI_HEARTBEAT_ENABLED" "false"
+        printf "Could not detect a new inbound Telegram message in logs within 60 seconds.\n"
+        printf "Heartbeat stays disabled; rerun setup after messaging the bot or set JARVIS_PHI_DEFAULT_CHAT_ID manually.\n"
+      fi
+    fi
   fi
 fi
 
