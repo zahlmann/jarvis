@@ -13,6 +13,7 @@ cd jarvis
 `wake-jarvis.sh` will:
 
 - ask for required Telegram + ChatGPT auth setup
+- ask how Jarvis should address you (`JARVIS_USER_NAME`)
 - ask optional voice-transcription setup (OpenAI key)
 - ask optional voice-reply setup (ElevenLabs key)
 - auto-write `.env`
@@ -48,6 +49,7 @@ For manual setup, copy `.env.example` to `.env` and set at least:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_WEBHOOK_SECRET`
+- `JARVIS_USER_NAME`
 - `PHI_AUTH_MODE=chatgpt`
 - `PHI_CHATGPT_ACCESS_TOKEN` (or preexisting `~/.phi/chatgpt_tokens.json`)
 - `JARVIS_PHI_DEFAULT_CHAT_ID` (required for heartbeat routing)

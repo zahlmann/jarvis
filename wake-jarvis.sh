@@ -186,6 +186,7 @@ printf "Repository: %s\n" "$ROOT_DIR"
 upsert_env "PHI_AUTH_MODE" "chatgpt"
 
 prompt_value "TELEGRAM_BOT_TOKEN" "Telegram Bot Token" true
+prompt_value "JARVIS_USER_NAME" "How should jarvis call you?"
 
 webhook_secret="$(get_env_value "TELEGRAM_WEBHOOK_SECRET")"
 if [[ -z "$webhook_secret" ]]; then

@@ -19,6 +19,7 @@ type Config struct {
 	TelegramWebhookToken string
 	TelegramAPIBase      string
 	Timezone             string
+	UserName             string
 
 	PhiAuthMode     provider.AuthMode
 	PhiModelID      string
@@ -104,6 +105,10 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 	thinking := parseThinkingLevel(os.Getenv("JARVIS_PHI_THINKING"))
 	openAIKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	elevenLabsKey := strings.TrimSpace(os.Getenv("ELEVENLABS_API_KEY"))
+	userName := strings.TrimSpace(os.Getenv("JARVIS_USER_NAME"))
+	if userName == "" {
+		userName = "<USER_NAME>"
+	}
 
 	cfg := Config{
 		Env:                  defaultString("JARVIS_PHI_ENV", "dev"),
@@ -113,11 +118,12 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 		TelegramWebhookToken: strings.TrimSpace(os.Getenv("TELEGRAM_WEBHOOK_SECRET")),
 		TelegramAPIBase:      defaultString("JARVIS_PHI_TELEGRAM_API_BASE", "https://api.telegram.org"),
 		Timezone:             defaultString("JARVIS_PHI_TZ", "UTC"),
+		UserName:             userName,
 		PhiAuthMode:          authMode,
 		PhiModelID:           modelID,
 		PhiThinking:          thinking,
 		PhiToolRoot:          toolRoot,
-		PhiSystemPrompt:      defaultPrompt(),
+		PhiSystemPrompt:      defaultPrompt(userName),
 		PhiAPIKey:            openAIKey,
 		PhiAccessToken:       strings.TrimSpace(os.Getenv("PHI_CHATGPT_ACCESS_TOKEN")),
 		PhiAccountID:         strings.TrimSpace(os.Getenv("PHI_CHATGPT_ACCOUNT_ID")),
@@ -146,15 +152,24 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 	return cfg, nil
 }
 
-func defaultPrompt() string {
+func defaultPrompt(userName string) string {
 	return strings.Join([]string{
 		"You are Jarvis running inside a Telegram wrapper on top of phi.",
+		fmt.Sprintf("Primary user name: %s. Use this naturally when helpful.", userName),
+		"Write like a real person: concise, conversational, and usually lowercase.",
+		"Say the obvious thing directly and cut through unnecessary complexity.",
+		"Challenge weak ideas and overcomplicated plans instead of defaulting to agreement.",
+		"Have opinions and make concrete recommendations when tradeoffs are clear.",
+		"Be curious about the user and ask brief follow-up questions when context is missing.",
+		"Do not get stuck repeating one topic after it was already addressed.",
+		"Keep a calm tone; do not overreact to events or dates.",
 		"Always use CLI-first workflows via bash when taking actions.",
 		"To send anything to Telegram, explicitly call `jarvisctl telegram ...` using bash.",
 		"For each inbound Telegram message, send at least one reply via `jarvisctl telegram send-text --chat <Chat ID> --text ...` unless the user explicitly asks for silence.",
 		"Do not assume your final assistant text is delivered to the user.",
 		"If you do not call a telegram send command, nothing is sent.",
 		"Use --help when exploring unfamiliar CLI commands.",
+		"For reminders or scheduled tasks, set them up first before unrelated work.",
 		"When scheduling tasks, use `jarvisctl schedule ...` and keep schedules precise.",
 		"Maintain concise, useful communication and rely on logs/artifacts for memory.",
 	}, " ")
