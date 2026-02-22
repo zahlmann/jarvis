@@ -44,6 +44,7 @@ func usage() {
   telegram send-voice --chat <id> --text <msg>
   telegram send-audio-file --chat <id> --path <file>
   telegram send-photo --chat <id> --path <file> [--caption <text>]
+  telegram set-webhook --url <https-url>/telegram/webhook
   schedule add|update|remove|list|run-due
   bring list|add|remove|complete ...`)
 }
@@ -60,11 +61,14 @@ func handleTelegram(args []string) {
 	if err != nil {
 		cli.Exitf("log store error: %v", err)
 	}
-	index, err := store.NewMessageIndex(filepath.Join(cfg.DataDir, "messages", "index.json"))
-	if err != nil {
-		cli.Exitf("message index error: %v", err)
-	}
 	client := telegram.NewClient(cfg.TelegramBotToken, cfg.TelegramAPIBase)
+	newMessageIndex := func() *store.MessageIndex {
+		index, idxErr := store.NewMessageIndex(filepath.Join(cfg.DataDir, "messages", "index.json"))
+		if idxErr != nil {
+			cli.Exitf("message index error: %v", idxErr)
+		}
+		return index
+	}
 
 	sub := args[0]
 	switch sub {
@@ -80,6 +84,7 @@ func handleTelegram(args []string) {
 		if err != nil {
 			cli.Exitf("send-text failed: %v", err)
 		}
+		index := newMessageIndex()
 		rec := store.MessageRecord{ChatID: *chatID, MessageID: res.MessageID, Direction: "outbound", Sender: "jarvis", Text: *text}
 		_ = index.Put(rec)
 		_ = logger.Write("telegram", "send_text", map[string]any{"chat_id": *chatID, "message_id": res.MessageID, "chars": len(*text)})
@@ -112,6 +117,7 @@ func handleTelegram(args []string) {
 		if err != nil {
 			cli.Exitf("send-voice failed: %v", err)
 		}
+		index := newMessageIndex()
 		_ = index.Put(store.MessageRecord{ChatID: *chatID, MessageID: res.MessageID, Direction: "outbound", Sender: "jarvis", Text: "[voice] " + *text})
 		_ = logger.Write("telegram", "send_voice", map[string]any{"chat_id": *chatID, "message_id": res.MessageID, "chars": len(*text)})
 		cli.PrintJSON(map[string]any{"ok": true, "message_id": res.MessageID})
@@ -128,6 +134,7 @@ func handleTelegram(args []string) {
 		if err != nil {
 			cli.Exitf("send-audio-file failed: %v", err)
 		}
+		index := newMessageIndex()
 		_ = index.Put(store.MessageRecord{ChatID: *chatID, MessageID: res.MessageID, Direction: "outbound", Sender: "jarvis", Text: "[audio-file] " + filepath.Base(*path)})
 		_ = logger.Write("telegram", "send_audio_file", map[string]any{"chat_id": *chatID, "message_id": res.MessageID, "path": *path})
 		cli.PrintJSON(map[string]any{"ok": true, "message_id": res.MessageID})
@@ -144,9 +151,37 @@ func handleTelegram(args []string) {
 		if err != nil {
 			cli.Exitf("send-photo failed: %v", err)
 		}
+		index := newMessageIndex()
 		_ = index.Put(store.MessageRecord{ChatID: *chatID, MessageID: res.MessageID, Direction: "outbound", Sender: "jarvis", Text: "[photo] " + *caption})
 		_ = logger.Write("telegram", "send_photo", map[string]any{"chat_id": *chatID, "message_id": res.MessageID, "path": *path})
 		cli.PrintJSON(map[string]any{"ok": true, "message_id": res.MessageID})
+	case "set-webhook":
+		fs := flag.NewFlagSet("set-webhook", flag.ExitOnError)
+		url := fs.String("url", "", "full webhook url")
+		baseURL := fs.String("base-url", "", "public base url; /telegram/webhook is appended")
+		path := fs.String("path", "/telegram/webhook", "webhook path used with --base-url")
+		secret := fs.String("secret", cfg.TelegramWebhookToken, "secret token (defaults to TELEGRAM_WEBHOOK_SECRET)")
+		_ = fs.Parse(args[1:])
+
+		webhookURL := strings.TrimSpace(*url)
+		if webhookURL == "" {
+			base := strings.TrimSpace(*baseURL)
+			if base == "" {
+				cli.Exitf("--url or --base-url is required")
+			}
+			webhookPath := strings.TrimSpace(*path)
+			if webhookPath == "" {
+				webhookPath = "/telegram/webhook"
+			}
+			webhookURL = strings.TrimRight(base, "/") + "/" + strings.TrimLeft(webhookPath, "/")
+		}
+
+		secretToken := strings.TrimSpace(*secret)
+		if err := client.SetWebhook(webhookURL, secretToken); err != nil {
+			cli.Exitf("set-webhook failed: %v", err)
+		}
+		_ = logger.Write("telegram", "set_webhook", map[string]any{"url": webhookURL, "has_secret": secretToken != ""})
+		cli.PrintJSON(map[string]any{"ok": true, "url": webhookURL, "secret_set": secretToken != ""})
 	default:
 		cli.Exitf("unknown telegram command: %s", sub)
 	}

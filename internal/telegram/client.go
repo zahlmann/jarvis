@@ -41,6 +41,11 @@ type sendResponse struct {
 	Result      tgMessage `json:"result"`
 }
 
+type okResponse struct {
+	OK          bool   `json:"ok"`
+	Description string `json:"description,omitempty"`
+}
+
 type tgMessage struct {
 	MessageID int64 `json:"message_id"`
 }
@@ -88,37 +93,71 @@ func (c *Client) SendPhotoFile(chatID int64, path string, caption string) (SendR
 	return c.sendMultipartFile("sendPhoto", "photo", path, fields)
 }
 
+func (c *Client) SetWebhook(url, secretToken string) error {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return fmt.Errorf("webhook url is required")
+	}
+
+	payload := map[string]any{
+		"url": url,
+	}
+	secretToken = strings.TrimSpace(secretToken)
+	if secretToken != "" {
+		payload["secret_token"] = secretToken
+	}
+
+	return c.sendOKJSON("setWebhook", payload)
+}
+
 func (c *Client) sendJSON(method string, payload map[string]any) (sendResponse, error) {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return sendResponse{}, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, c.endpoint(method), bytes.NewReader(body))
-	if err != nil {
-		return sendResponse{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return sendResponse{}, err
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return sendResponse{}, err
-	}
-
 	var out sendResponse
-	if err := json.Unmarshal(data, &out); err != nil {
-		return sendResponse{}, fmt.Errorf("decode telegram response: %w", err)
+	if err := c.postJSON(method, payload, &out); err != nil {
+		return sendResponse{}, err
 	}
 	if !out.OK {
 		return sendResponse{}, fmt.Errorf("telegram %s failed: %s", method, out.Description)
 	}
 	return out, nil
+}
+
+func (c *Client) sendOKJSON(method string, payload map[string]any) error {
+	var out okResponse
+	if err := c.postJSON(method, payload, &out); err != nil {
+		return err
+	}
+	if !out.OK {
+		return fmt.Errorf("telegram %s failed: %s", method, out.Description)
+	}
+	return nil
+}
+
+func (c *Client) postJSON(method string, payload map[string]any, out any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, c.endpoint(method), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("decode telegram response: %w", err)
+	}
+	return nil
 }
 
 func (c *Client) sendMultipartFile(method, fieldName, path string, fields map[string]string) (SendResult, error) {

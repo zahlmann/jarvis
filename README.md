@@ -19,6 +19,15 @@ cd jarvis
 - build the server binary
 - install reboot autostart + crash restart via a background supervisor
 - start Jarvis immediately
+- guide Cloudflare Zero Trust tunnel setup and optionally auto-register Telegram webhook
+
+When `wake-jarvis.sh` asks for the public URL, use this Cloudflare Zero Trust flow:
+
+1. Open Zero Trust dashboard.
+2. Go to `Network` -> `Connectors`.
+3. Click `Create Tunnel`.
+4. Add a public hostname that forwards to your local Jarvis listener (default `http://127.0.0.1:8080`).
+5. Copy the `https://...` URL and paste it into `wake-jarvis.sh`; the script will run `setWebhook` for you.
 
 ## What it does
 
@@ -80,6 +89,14 @@ Run CLI:
 ```bash
 go run ./cmd/jarvisctl --help
 ```
+
+Webhook setup helper:
+
+```bash
+go run ./cmd/jarvisctl telegram set-webhook --url https://YOUR_DOMAIN/telegram/webhook
+```
+
+`set-webhook` uses `TELEGRAM_WEBHOOK_SECRET` from `.env` by default, so you do not need to paste the token manually again.
 
 Examples:
 

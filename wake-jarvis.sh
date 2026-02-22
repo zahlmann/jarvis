@@ -146,6 +146,25 @@ generate_secret() {
   fi
 }
 
+local_target_url() {
+  local listen_addr="$1"
+  local target
+  target="$(trim "$listen_addr")"
+  if [[ -z "$target" ]]; then
+    target=":8080"
+  fi
+  if [[ "$target" == :* ]]; then
+    target="127.0.0.1$target"
+  fi
+  if [[ "$target" == 0.0.0.0:* ]]; then
+    target="127.0.0.1:${target##*:}"
+  fi
+  if [[ "$target" != http://* && "$target" != https://* ]]; then
+    target="http://$target"
+  fi
+  printf "%s" "$target"
+}
+
 printf "== Jarvis bootstrap ==\n"
 printf "Repository: %s\n" "$ROOT_DIR"
 
@@ -284,11 +303,52 @@ else
   printf "Jarvis started in background.\n"
 fi
 
+listen_addr="$(get_env_value "JARVIS_PHI_LISTEN_ADDR")"
+listen_addr="${listen_addr:-:8080}"
+local_target="$(local_target_url "$listen_addr")"
+
+printf "\nWebhook setup:\n"
+printf "Telegram needs a public HTTPS endpoint for /telegram/webhook.\n"
+printf "Jarvis local listener: %s\n" "$listen_addr"
+printf "If this machine is not publicly reachable, create a tunnel first.\n"
+printf "Cloudflare Zero Trust flow:\n"
+printf "  1) Open Zero Trust dashboard.\n"
+printf "  2) Go to Network -> Connectors.\n"
+printf "  3) Create Tunnel.\n"
+printf "  4) Add a public hostname that forwards to %s.\n" "$local_target"
+printf "  5) Copy the public https://... URL and paste it below.\n"
+
+read -r -p "Public HTTPS base URL (press Enter to skip for now): " webhook_base_url
+webhook_base_url="$(trim "$webhook_base_url")"
+webhook_configured="false"
+webhook_url=""
+if [[ -n "$webhook_base_url" ]]; then
+  webhook_base_url="${webhook_base_url%/}"
+  webhook_url="$webhook_base_url/telegram/webhook"
+  printf "Using TELEGRAM_WEBHOOK_SECRET from .env as Telegram secret token.\n"
+  printf "Registering Telegram webhook at %s...\n" "$webhook_url"
+  if (
+    cd "$ROOT_DIR"
+    go run ./cmd/jarvisctl telegram set-webhook --url "$webhook_url"
+  ); then
+    webhook_configured="true"
+    printf "Telegram webhook configured successfully.\n"
+  else
+    printf "Webhook registration failed. You can retry later with:\n"
+    printf "  go run ./cmd/jarvisctl telegram set-webhook --url %s\n" "$webhook_url"
+  fi
+fi
+
 printf "\nDone.\n"
 printf -- "- Env file: %s\n" "$ENV_FILE"
 printf -- "- Log file: %s\n" "$LOG_DIR/server.out.log"
 printf -- "- Background supervisor: %s\n" "$SUPERVISOR_PATH"
 printf "\nNext:\n"
-printf "1) Point Telegram webhook to: https://YOUR_DOMAIN/telegram/webhook\n"
-printf "2) Use secret token: %s\n" "$(get_env_value "TELEGRAM_WEBHOOK_SECRET")"
-printf "3) Watch logs: tail -f %s\n" "$LOG_DIR/server.out.log"
+if [[ "$webhook_configured" == "true" ]]; then
+  printf "1) Webhook active: %s\n" "$webhook_url"
+  printf "2) Watch logs: tail -f %s\n" "$LOG_DIR/server.out.log"
+else
+  printf "1) Expose %s on a public HTTPS URL (Zero Trust steps shown above).\n" "$local_target"
+  printf "2) Run: go run ./cmd/jarvisctl telegram set-webhook --url https://YOUR_DOMAIN/telegram/webhook\n"
+  printf "3) Watch logs: tail -f %s\n" "$LOG_DIR/server.out.log"
+fi
