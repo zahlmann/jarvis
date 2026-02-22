@@ -69,8 +69,10 @@ func TestDefaultPromptBehaviorChangesStayOutOfMemory(t *testing.T) {
 	prompt := defaultPrompt("alex")
 	required := []string{
 		"change your own behavior",
-		"do not save that request as memory",
 		"worth looking up later",
+		"internal/config/config.go",
+		"defaultPrompt(...)",
+		"Do not save that request as memory",
 	}
 	for _, fragment := range required {
 		if !strings.Contains(prompt, fragment) {
