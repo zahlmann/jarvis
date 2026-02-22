@@ -6,6 +6,7 @@
 !/data/.gitkeep
 
 /.cache/
+/.codex/
 /bin/
 /scripts/jarvis-supervisor.sh
 *.log
