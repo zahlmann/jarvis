@@ -11,3 +11,6 @@
 /scripts/jarvis-supervisor.sh
 *.log
 AGENTS.md
+
+/scratch/*
+!/scratch/.gitkeep

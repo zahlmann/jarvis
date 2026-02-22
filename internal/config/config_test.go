@@ -81,6 +81,20 @@ func TestDefaultPromptBehaviorChangesStayOutOfMemory(t *testing.T) {
 	}
 }
 
+func TestDefaultPromptStandaloneWorkspaceRules(t *testing.T) {
+	prompt := defaultPrompt("alex")
+	required := []string{
+		"`scratch/` at repo root",
+		"check `scratch/` first",
+		"own subdirectory under `scratch/`",
+	}
+	for _, fragment := range required {
+		if !strings.Contains(prompt, fragment) {
+			t.Fatalf("defaultPrompt missing %q", fragment)
+		}
+	}
+}
+
 func TestDefaultHeartbeatPromptCleanupCriteria(t *testing.T) {
 	prompt := defaultHeartbeatPrompt()
 	required := []string{
