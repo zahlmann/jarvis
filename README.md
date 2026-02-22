@@ -37,6 +37,7 @@ When `wake-jarvis.sh` asks for the public URL, use this Cloudflare Zero Trust fl
 - Full `phi` coding tools enabled (`write/read/edit/bash`)
 - Explicit-send contract: agent must call `./bin/jarvisctl telegram ...` from repo root; final assistant text is not auto-delivered
 - Persistent memory in parquet (`jarvisctl memory save|retrieve|list|remove`) with background embedding backfill every minute
+- Rolling recent-chat cache for fast recap (`jarvisctl recent --chat <id> --pairs 10`)
 - Internal scheduler with persistent jobs + internal `heartbeat`
 - Heartbeat policy: every 30 minutes with jitter `-10m..+10m`; skipped if busy through window
 - Default [Bring app](https://www.getbring.com/) integration (`jarvisctl bring list|add|remove|complete`)
@@ -143,6 +144,9 @@ go run ./cmd/jarvisctl memory save --keywords "coffee,morning" --memory "user pr
 
 # Retrieve related memories
 go run ./cmd/jarvisctl memory retrieve --query "what coffee does the user like?" --limit 5
+
+# Recap the latest user/jarvis back-and-forth
+go run ./cmd/jarvisctl recent --chat 123456 --pairs 10
 ```
 
 ## Data layout
@@ -150,6 +154,7 @@ go run ./cmd/jarvisctl memory retrieve --query "what coffee does the user like?"
 - `data/logs/events-YYYY-MM-DD.jsonl`
 - `data/messages/dedup.json`
 - `data/messages/index.json`
+- `data/messages/recent/chat-<id>.jsonl`
 - `data/memory/memories.parquet`
 - `data/sessions/chat-<id>.jsonl`
 - `data/scheduler/jobs.json`

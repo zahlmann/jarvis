@@ -14,6 +14,7 @@ import (
 
 	"github.com/zahlmann/jarvis-phi/internal/config"
 	"github.com/zahlmann/jarvis-phi/internal/logstore"
+	"github.com/zahlmann/jarvis-phi/internal/store"
 	"github.com/zahlmann/phi/agent"
 	"github.com/zahlmann/phi/ai/model"
 	"github.com/zahlmann/phi/ai/provider"
@@ -25,7 +26,11 @@ import (
 
 var okTruePattern = regexp.MustCompile(`"ok"\s*:\s*true`)
 
-const sessionIdleTimeout = 30 * time.Minute
+const (
+	sessionIdleTimeout   = 30 * time.Minute
+	recentRecapExchanges = 10
+	recentRecapTextLimit = 280
+)
 
 type PromptInput struct {
 	ChatID   int64
@@ -50,6 +55,8 @@ type Service struct {
 	trackMu          sync.Mutex
 	sendCalled       map[int64]bool
 	pendingSendCalls map[int64]map[string]struct{}
+
+	recent *store.RecentStore
 }
 
 type chatSession struct {
@@ -65,6 +72,11 @@ type chatSession struct {
 }
 
 func New(cfg config.Config, logger *logstore.Store) *Service {
+	recentStore, err := store.NewRecentStore(filepath.Join(cfg.DataDir, "messages", "recent"), store.DefaultRecentMaxMessages)
+	if err != nil && logger != nil {
+		_ = logger.Write("runtime", "recent_store_init_error", map[string]any{"error": err.Error()})
+	}
+
 	return &Service{
 		cfg:              cfg,
 		logger:           logger,
@@ -72,6 +84,7 @@ func New(cfg config.Config, logger *logstore.Store) *Service {
 		sessions:         map[int64]*chatSession{},
 		sendCalled:       map[int64]bool{},
 		pendingSendCalls: map[int64]map[string]struct{}{},
+		recent:           recentStore,
 	}
 }
 
@@ -143,7 +156,7 @@ func (s *Service) runLoop(cs *chatSession, first PromptInput) {
 }
 
 func (s *Service) runPrompt(cs *chatSession, input PromptInput) error {
-	agentSession, err := s.ensureSession(cs)
+	agentSession, isNewSession, err := s.ensureSession(cs)
 	if err != nil {
 		return err
 	}
@@ -162,7 +175,7 @@ func (s *Service) runPrompt(cs *chatSession, input PromptInput) error {
 	}
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		envelope := s.buildPromptEnvelope(input)
+		envelope := s.buildPromptEnvelope(input, isNewSession && attempt == 1)
 		if attempt > 1 {
 			envelope = s.buildNoSendRecoveryEnvelope(input, attempt)
 			_ = s.logger.Write("runtime", "retry_prompt_after_no_send", map[string]any{
@@ -195,11 +208,11 @@ func (s *Service) runPrompt(cs *chatSession, input PromptInput) error {
 	return fmt.Errorf("no successful telegram send command after %d attempt(s)", maxAttempts)
 }
 
-func (s *Service) ensureSession(cs *chatSession) (*sdk.AgentSession, error) {
+func (s *Service) ensureSession(cs *chatSession) (*sdk.AgentSession, bool, error) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	if cs.session != nil {
-		return cs.session, nil
+		return cs.session, false, nil
 	}
 
 	sessionID := sessionIDForChat(cs.chatID)
@@ -238,7 +251,7 @@ func (s *Service) ensureSession(cs *chatSession) (*sdk.AgentSession, error) {
 		"auth_mode":  string(s.cfg.PhiAuthMode),
 	})
 
-	return cs.session, nil
+	return cs.session, true, nil
 }
 
 func (s *Service) expireIdleSessionLocked(cs *chatSession, now time.Time) {
@@ -291,7 +304,7 @@ func (s *Service) getOrCreateChatSession(chatID int64) *chatSession {
 	return created
 }
 
-func (s *Service) buildPromptEnvelope(input PromptInput) string {
+func (s *Service) buildPromptEnvelope(input PromptInput, includeRecentRecap bool) string {
 	loc := time.UTC
 	if tz, err := time.LoadLocation(s.cfg.Timezone); err == nil {
 		loc = tz
@@ -313,9 +326,87 @@ func (s *Service) buildPromptEnvelope(input PromptInput) string {
 	if strings.TrimSpace(input.ReplyTo) != "" {
 		parts = append(parts, fmt.Sprintf("[Replying to: %s]", input.ReplyTo))
 	}
+	if includeRecentRecap {
+		if recap := s.buildRecentRecap(input, recentRecapExchanges); recap != "" {
+			parts = append(parts, "")
+			parts = append(parts, recap)
+		}
+	}
 	parts = append(parts, "")
 	parts = append(parts, "Message: "+input.Message)
 	return strings.Join(parts, "\n")
+}
+
+func (s *Service) buildRecentRecap(input PromptInput, limit int) string {
+	if s.recent == nil || input.ChatID == 0 || limit <= 0 {
+		return ""
+	}
+
+	exchanges, err := s.recent.LastExchanges(input.ChatID, limit+1)
+	if err != nil || len(exchanges) == 0 {
+		return ""
+	}
+
+	currentMessage := strings.TrimSpace(input.Message)
+	if currentMessage != "" {
+		last := exchanges[len(exchanges)-1]
+		if strings.TrimSpace(last.User.Text) == currentMessage && len(last.Jarvis) == 0 {
+			exchanges = exchanges[:len(exchanges)-1]
+		}
+	}
+	if len(exchanges) == 0 {
+		return ""
+	}
+	if len(exchanges) > limit {
+		exchanges = exchanges[len(exchanges)-limit:]
+	}
+
+	lines := []string{
+		fmt.Sprintf("[Recent recap: %d prior user/jarvis exchange(s) from persistent history; use only when relevant.]", len(exchanges)),
+	}
+	for idx, exchange := range exchanges {
+		n := idx + 1
+		userText := truncatePromptText(exchange.User.Text, recentRecapTextLimit)
+		if userText == "" {
+			userText = "(empty)"
+		}
+		lines = append(lines, fmt.Sprintf("recent %d user: %s", n, userText))
+
+		if len(exchange.Jarvis) == 0 {
+			lines = append(lines, fmt.Sprintf("recent %d jarvis: (no reply recorded)", n))
+			continue
+		}
+
+		replies := make([]string, 0, len(exchange.Jarvis))
+		for _, reply := range exchange.Jarvis {
+			text := truncatePromptText(reply.Text, recentRecapTextLimit)
+			if text != "" {
+				replies = append(replies, text)
+			}
+		}
+		if len(replies) == 0 {
+			lines = append(lines, fmt.Sprintf("recent %d jarvis: (empty)", n))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("recent %d jarvis: %s", n, strings.Join(replies, " | ")))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func truncatePromptText(raw string, maxChars int) string {
+	normalized := strings.Join(strings.Fields(strings.TrimSpace(raw)), " ")
+	if maxChars <= 0 {
+		return normalized
+	}
+	runes := []rune(normalized)
+	if len(runes) <= maxChars {
+		return normalized
+	}
+	if maxChars <= 3 {
+		return string(runes[:maxChars])
+	}
+	return string(runes[:maxChars-3]) + "..."
 }
 
 func (s *Service) buildNoSendRecoveryEnvelope(input PromptInput, attempt int) string {

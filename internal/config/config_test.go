@@ -110,6 +110,19 @@ func TestDefaultPromptTypingAndFormattingPreferences(t *testing.T) {
 	}
 }
 
+func TestDefaultPromptRecentRecapCommand(t *testing.T) {
+	prompt := defaultPrompt("alex")
+	required := []string{
+		"implicitly references very recent chat context",
+		"`./bin/jarvisctl recent --chat <Chat ID> --pairs 10`",
+	}
+	for _, fragment := range required {
+		if !strings.Contains(prompt, fragment) {
+			t.Fatalf("defaultPrompt missing %q", fragment)
+		}
+	}
+}
+
 func TestDefaultHeartbeatPromptCleanupCriteria(t *testing.T) {
 	prompt := defaultHeartbeatPrompt()
 	required := []string{

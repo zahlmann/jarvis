@@ -34,6 +34,7 @@ type app struct {
 	runtime  *runtime.Service
 	dedup    *store.DedupStore
 	msgIndex *store.MessageIndex
+	recent   *store.RecentStore
 }
 
 func main() {
@@ -58,6 +59,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("message index error: %v", err)
 	}
+	recent, err := store.NewRecentStore(filepath.Join(cfg.DataDir, "messages", "recent"), store.DefaultRecentMaxMessages)
+	if err != nil {
+		log.Fatalf("recent store error: %v", err)
+	}
 	memStore, err := memory.NewStore(filepath.Join(cfg.DataDir, "memory", "memories.parquet"))
 	if err != nil {
 		log.Fatalf("memory store error: %v", err)
@@ -77,6 +82,7 @@ func main() {
 		runtime:  rt,
 		dedup:    dedup,
 		msgIndex: msgIndex,
+		recent:   recent,
 	}
 
 	schedStore, err := scheduler.NewStore(filepath.Join(cfg.DataDir, "scheduler", "jobs.json"))
@@ -258,13 +264,23 @@ func (a *app) processNormalized(n telegram.NormalizedUpdate) {
 		input.Message = "(empty message)"
 	}
 
-	_ = a.msgIndex.Put(store.MessageRecord{
+	record := store.MessageRecord{
 		ChatID:    n.ChatID,
 		MessageID: n.MessageID,
 		Direction: "inbound",
 		Sender:    n.UserName,
 		Text:      input.Message,
-	})
+	}
+	_ = a.msgIndex.Put(record)
+	if a.recent != nil {
+		if err := a.recent.Append(record); err != nil {
+			_ = a.logger.Write("messages", "recent_append_error", map[string]any{
+				"chat_id":    n.ChatID,
+				"message_id": n.MessageID,
+				"error":      err.Error(),
+			})
+		}
+	}
 
 	_ = a.logger.Write("telegram", "inbound_message", map[string]any{
 		"chat_id":    n.ChatID,

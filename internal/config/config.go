@@ -190,6 +190,7 @@ func defaultPrompt(userName string) string {
 		"After Bring commands, send a short Telegram confirmation with what was changed or why it failed.",
 		"System-instruction source of truth is `internal/config/config.go`: conversational behavior in `defaultPrompt(...)`, heartbeat behavior in `defaultHeartbeatPrompt()`.",
 		"Memory is core behavior: for most inbound user messages, first run `./bin/jarvisctl memory retrieve --query \"<message>\"` and use relevant results.",
+		"When the user implicitly references very recent chat context and details are unclear, run `./bin/jarvisctl recent --chat <Chat ID> --pairs 10` to recap the latest back-and-forth before answering.",
 		"When the user shares durable preferences, personal facts, ongoing projects, constraints, or plans worth looking up later, save them with `./bin/jarvisctl memory save --keywords \"k1,k2,...\" --memory \"...\"`.",
 		"When the user asks you to change your own behavior (writing style, emoji use, tone, how to address them, or similar), first go directly to `internal/config/config.go` and update `defaultPrompt(...)`; do not spend time searching elsewhere unless that path no longer exists. Do not save that request as memory.",
 		"Use concise, searchable keywords that maximize retrieval quality.",

@@ -36,6 +36,8 @@ func main() {
 		handleBring(os.Args[2:])
 	case "memory":
 		handleMemory(os.Args[2:])
+	case "recent":
+		handleRecent(os.Args[2:])
 	default:
 		usage()
 		os.Exit(1)
@@ -52,7 +54,8 @@ func usage() {
   telegram set-webhook --url <https-url>/telegram/webhook
   schedule add|update|remove|list|run-due
   bring list|add|remove|complete ...
-  memory save|retrieve|list|remove ...`)
+  memory save|retrieve|list|remove ...
+  recent --chat <id> [--pairs <n>]`)
 }
 
 func handleTelegram(args []string) {
@@ -75,6 +78,32 @@ func handleTelegram(args []string) {
 		}
 		return index
 	}
+	newRecentStore := func() *store.RecentStore {
+		recent, recentErr := store.NewRecentStore(filepath.Join(cfg.DataDir, "messages", "recent"), store.DefaultRecentMaxMessages)
+		if recentErr != nil {
+			cli.Exitf("recent store error: %v", recentErr)
+		}
+		return recent
+	}
+	persistOutbound := func(rec store.MessageRecord) {
+		index := newMessageIndex()
+		if err := index.Put(rec); err != nil {
+			_ = logger.Write("messages", "index_put_error", map[string]any{
+				"chat_id":    rec.ChatID,
+				"message_id": rec.MessageID,
+				"error":      err.Error(),
+			})
+		}
+
+		recent := newRecentStore()
+		if err := recent.Append(rec); err != nil {
+			_ = logger.Write("messages", "recent_append_error", map[string]any{
+				"chat_id":    rec.ChatID,
+				"message_id": rec.MessageID,
+				"error":      err.Error(),
+			})
+		}
+	}
 
 	sub := args[0]
 	switch sub {
@@ -90,9 +119,8 @@ func handleTelegram(args []string) {
 		if err != nil {
 			cli.Exitf("send-text failed: %v", err)
 		}
-		index := newMessageIndex()
 		rec := store.MessageRecord{ChatID: *chatID, MessageID: res.MessageID, Direction: "outbound", Sender: "jarvis", Text: *text}
-		_ = index.Put(rec)
+		persistOutbound(rec)
 		_ = logger.Write("telegram", "send_text", map[string]any{"chat_id": *chatID, "message_id": res.MessageID, "chars": len(*text)})
 		cli.PrintJSON(map[string]any{"ok": true, "message_id": res.MessageID})
 	case "typing":
@@ -135,8 +163,7 @@ func handleTelegram(args []string) {
 		if err != nil {
 			cli.Exitf("send-voice failed: %v", err)
 		}
-		index := newMessageIndex()
-		_ = index.Put(store.MessageRecord{ChatID: *chatID, MessageID: res.MessageID, Direction: "outbound", Sender: "jarvis", Text: "[voice] " + *text})
+		persistOutbound(store.MessageRecord{ChatID: *chatID, MessageID: res.MessageID, Direction: "outbound", Sender: "jarvis", Text: "[voice] " + *text})
 		_ = logger.Write("telegram", "send_voice", map[string]any{"chat_id": *chatID, "message_id": res.MessageID, "chars": len(*text)})
 		cli.PrintJSON(map[string]any{"ok": true, "message_id": res.MessageID})
 	case "send-audio-file":
@@ -152,8 +179,7 @@ func handleTelegram(args []string) {
 		if err != nil {
 			cli.Exitf("send-audio-file failed: %v", err)
 		}
-		index := newMessageIndex()
-		_ = index.Put(store.MessageRecord{ChatID: *chatID, MessageID: res.MessageID, Direction: "outbound", Sender: "jarvis", Text: "[audio-file] " + filepath.Base(*path)})
+		persistOutbound(store.MessageRecord{ChatID: *chatID, MessageID: res.MessageID, Direction: "outbound", Sender: "jarvis", Text: "[audio-file] " + filepath.Base(*path)})
 		_ = logger.Write("telegram", "send_audio_file", map[string]any{"chat_id": *chatID, "message_id": res.MessageID, "path": *path})
 		cli.PrintJSON(map[string]any{"ok": true, "message_id": res.MessageID})
 	case "send-photo":
@@ -169,8 +195,7 @@ func handleTelegram(args []string) {
 		if err != nil {
 			cli.Exitf("send-photo failed: %v", err)
 		}
-		index := newMessageIndex()
-		_ = index.Put(store.MessageRecord{ChatID: *chatID, MessageID: res.MessageID, Direction: "outbound", Sender: "jarvis", Text: "[photo] " + *caption})
+		persistOutbound(store.MessageRecord{ChatID: *chatID, MessageID: res.MessageID, Direction: "outbound", Sender: "jarvis", Text: "[photo] " + *caption})
 		_ = logger.Write("telegram", "send_photo", map[string]any{"chat_id": *chatID, "message_id": res.MessageID, "path": *path})
 		cli.PrintJSON(map[string]any{"ok": true, "message_id": res.MessageID})
 	case "set-webhook":
@@ -312,6 +337,44 @@ func handleBring(args []string) {
 		cli.Exitf("bring failed: %v", err)
 	}
 	fmt.Println(output)
+}
+
+func handleRecent(args []string) {
+	cfg, err := config.LoadWithOptions(config.LoadOptions{
+		RequireTelegramToken:  false,
+		RequirePhiCredentials: false,
+	})
+	if err != nil {
+		cli.Exitf("config error: %v", err)
+	}
+
+	recent, err := store.NewRecentStore(filepath.Join(cfg.DataDir, "messages", "recent"), store.DefaultRecentMaxMessages)
+	if err != nil {
+		cli.Exitf("recent store error: %v", err)
+	}
+
+	fs := flag.NewFlagSet("recent", flag.ExitOnError)
+	chatID := fs.Int64("chat", 0, "chat id")
+	pairs := fs.Int("pairs", 10, "number of recent user<->jarvis exchanges")
+	_ = fs.Parse(args)
+
+	if *chatID == 0 {
+		cli.Exitf("--chat is required")
+	}
+	if *pairs <= 0 {
+		cli.Exitf("--pairs must be > 0")
+	}
+
+	exchanges, err := recent.LastExchanges(*chatID, *pairs)
+	if err != nil {
+		cli.Exitf("recent retrieval failed: %v", err)
+	}
+
+	cli.PrintJSON(map[string]any{
+		"chat_id":   *chatID,
+		"pairs":     *pairs,
+		"exchanges": exchanges,
+	})
 }
 
 func handleMemory(args []string) {
