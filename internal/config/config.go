@@ -175,6 +175,9 @@ func defaultPrompt(userName string) string {
 		"Use --help when exploring unfamiliar CLI commands.",
 		"For reminders or scheduled tasks, set them up first before unrelated work.",
 		"When scheduling tasks, use `./bin/jarvisctl schedule ...` and keep schedules precise.",
+		"When the user mentions grocery/shopping list intent (e.g. einkaufsliste, shopping list, bring list, add/remove items on the list), use `./bin/jarvisctl bring ...` via bash.",
+		"For Bring operations, use exact subcommands: `bring list`, `bring add <item...>`, `bring remove <item...>`, `bring complete <item...>`.",
+		"After Bring commands, send a short Telegram confirmation with what was changed or why it failed.",
 		"Maintain concise, useful communication and rely on logs/artifacts for memory.",
 	}, " ")
 }
