@@ -180,6 +180,19 @@ local_target_url() {
   printf "%s" "$target"
 }
 
+wait_for_managed_server() {
+  local max_wait="${1:-20}"
+  local waited=0
+  while (( waited < max_wait )); do
+    if pgrep -f "$BIN_PATH" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
 printf "== Jarvis bootstrap ==\n"
 printf "Repository: %s\n" "$ROOT_DIR"
 
@@ -303,10 +316,25 @@ fi
 
 if pgrep -f "$SUPERVISOR_PATH" >/dev/null 2>&1; then
   printf "Jarvis supervisor already running.\n"
+  server_pids="$(pgrep -f "$BIN_PATH" || true)"
+  if [[ -n "$server_pids" ]]; then
+    printf "Restarting Jarvis server to apply latest changes...\n"
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] || continue
+      kill -TERM "$pid" || true
+    done <<< "$server_pids"
+  else
+    printf "No running Jarvis server process found; waiting for supervisor to start it.\n"
+  fi
 else
   nohup "$SUPERVISOR_PATH" >/dev/null 2>&1 &
-  sleep 1
   printf "Jarvis started in background.\n"
+fi
+
+if wait_for_managed_server 20; then
+  printf "Jarvis server is running.\n"
+else
+  printf "Warning: Jarvis server did not appear within 20 seconds. Check %s/server.out.log\n" "$LOG_DIR"
 fi
 
 listen_addr="$(get_env_value "JARVIS_PHI_LISTEN_ADDR")"
