@@ -285,9 +285,9 @@ else
 fi
 
 printf "\nDone.\n"
-printf "- Env file: %s\n" "$ENV_FILE"
-printf "- Log file: %s\n" "$LOG_DIR/server.out.log"
-printf "- Background supervisor: %s\n" "$SUPERVISOR_PATH"
+printf -- "- Env file: %s\n" "$ENV_FILE"
+printf -- "- Log file: %s\n" "$LOG_DIR/server.out.log"
+printf -- "- Background supervisor: %s\n" "$SUPERVISOR_PATH"
 printf "\nNext:\n"
 printf "1) Point Telegram webhook to: https://YOUR_DOMAIN/telegram/webhook\n"
 printf "2) Use secret token: %s\n" "$(get_env_value "TELEGRAM_WEBHOOK_SECRET")"
