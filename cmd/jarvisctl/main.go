@@ -45,6 +45,7 @@ func main() {
 func usage() {
 	fmt.Println(`jarvisctl commands:
   telegram send-text --chat <id> --text <msg>
+  telegram typing --chat <id>
   telegram send-voice --chat <id> --text <msg>
   telegram send-audio-file --chat <id> --path <file>
   telegram send-photo --chat <id> --path <file> [--caption <text>]
@@ -94,6 +95,18 @@ func handleTelegram(args []string) {
 		_ = index.Put(rec)
 		_ = logger.Write("telegram", "send_text", map[string]any{"chat_id": *chatID, "message_id": res.MessageID, "chars": len(*text)})
 		cli.PrintJSON(map[string]any{"ok": true, "message_id": res.MessageID})
+	case "typing":
+		fs := flag.NewFlagSet("typing", flag.ExitOnError)
+		chatID := fs.Int64("chat", 0, "chat id")
+		_ = fs.Parse(args[1:])
+		if *chatID == 0 {
+			cli.Exitf("--chat is required")
+		}
+		if err := client.SendTyping(*chatID); err != nil {
+			cli.Exitf("typing failed: %v", err)
+		}
+		_ = logger.Write("telegram", "typing", map[string]any{"chat_id": *chatID})
+		cli.PrintJSON(map[string]any{"ok": true, "action": "typing"})
 	case "send-voice":
 		fs := flag.NewFlagSet("send-voice", flag.ExitOnError)
 		chatID := fs.Int64("chat", 0, "chat id")

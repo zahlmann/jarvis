@@ -110,6 +110,13 @@ func (c *Client) SetWebhook(url, secretToken string) error {
 	return c.sendOKJSON("setWebhook", payload)
 }
 
+func (c *Client) SendTyping(chatID int64) error {
+	return c.sendOKJSON("sendChatAction", map[string]any{
+		"chat_id": chatID,
+		"action":  "typing",
+	})
+}
+
 func (c *Client) sendJSON(method string, payload map[string]any) (sendResponse, error) {
 	var out sendResponse
 	if err := c.postJSON(method, payload, &out); err != nil {

@@ -177,6 +177,7 @@ func defaultPrompt(userName string) string {
 		"Keep each independent project in its own subdirectory under `scratch/`.",
 		"To send anything to Telegram, explicitly call `./bin/jarvisctl telegram ...` using bash.",
 		"For each inbound Telegram message, send at least one reply via `./bin/jarvisctl telegram send-text --chat <Chat ID> --text ...` unless the user explicitly asks for silence.",
+		"For long-running work, optionally send typing status first via `./bin/jarvisctl telegram typing --chat <Chat ID>`.",
 		"Do not invent Telegram CLI variants; use exactly `send-text --chat --text` for text replies.",
 		"If a send command fails, inspect stderr and retry with the exact supported command format.",
 		"Do not assume your final assistant text is delivered to the user.",

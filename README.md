@@ -102,6 +102,12 @@ cd /path/to/jarvis
 ./bin/jarvisctl telegram send-text --chat 123456 --text "hello"
 ```
 
+Optional typing indicator:
+
+```bash
+./bin/jarvisctl telegram typing --chat 123456
+```
+
 Use exact supported Telegram CLI flags/subcommands. Variants like `telegram send` or `--chat-id` are invalid.
 
 Webhook setup helper:
@@ -117,6 +123,9 @@ Examples:
 ```bash
 # Send message
 go run ./cmd/jarvisctl telegram send-text --chat 123456 --text "hello"
+
+# Send typing status
+go run ./cmd/jarvisctl telegram typing --chat 123456
 
 # Add scheduled prompt
 go run ./cmd/jarvisctl schedule add \

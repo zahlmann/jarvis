@@ -61,6 +61,50 @@ func TestSetWebhookRequiresURL(t *testing.T) {
 	}
 }
 
+func TestSendTyping(t *testing.T) {
+	t.Parallel()
+
+	var gotPath string
+	var gotChatID float64
+	var gotAction string
+
+	client := NewClient("test-token", "https://api.telegram.org")
+	client.http = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.Method != http.MethodPost {
+				t.Fatalf("unexpected method: %s", r.Method)
+			}
+			gotPath = r.URL.Path
+
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode payload: %v", err)
+			}
+			gotChatID, _ = payload["chat_id"].(float64)
+			gotAction, _ = payload["action"].(string)
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":true}`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+
+	if err := client.SendTyping(12345); err != nil {
+		t.Fatalf("SendTyping returned error: %v", err)
+	}
+	if gotPath != "/bottest-token/sendChatAction" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	if gotChatID != 12345 {
+		t.Fatalf("unexpected chat_id payload: %v", gotChatID)
+	}
+	if gotAction != "typing" {
+		t.Fatalf("unexpected action payload: %q", gotAction)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
