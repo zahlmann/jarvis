@@ -9,3 +9,4 @@
 /bin/
 /scripts/jarvis-supervisor.sh
 *.log
+AGENTS.md
