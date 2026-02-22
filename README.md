@@ -1,12 +1,12 @@
-# jarvis-phi
+# jarvis
 
-Go-native Telegram wrapper around `phi`.
+Go-native Telegram wrapper around [`phi`](https://github.com/zahlmann/phi).
 
 ## Quick Start
 
 ```bash
-git clone <your-repo-url> jarvis-phi
-cd jarvis-phi
+git clone <your-repo-url> jarvis
+cd jarvis
 ./wake-jarvis.sh
 ```
 
@@ -28,12 +28,14 @@ cd jarvis-phi
 - Explicit-send contract: agent must call `jarvisctl telegram ...`; final assistant text is not auto-delivered
 - Internal scheduler with persistent jobs + internal `heartbeat`
 - Heartbeat policy: every 30 minutes with jitter `-10m..+10m`; skipped if busy through window
-- Native Bring integration (`jarvisctl bring list|add|remove|complete`)
+- Default [Bring app](https://www.getbring.com/) integration (`jarvisctl bring list|add|remove|complete`)
 - Structured JSONL logs for inbound, stream/tool events, scheduler decisions, and outbound CLI sends
 
 ## Env
 
-Copy `.env.example` to `.env` and set at least:
+If you already completed the interactive `./wake-jarvis.sh` setup, manual env setup is usually not needed because the script writes `.env` for you.
+
+For manual setup, copy `.env.example` to `.env` and set at least:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_WEBHOOK_SECRET`
@@ -51,7 +53,7 @@ If using voice:
 - `OPENAI_API_KEY` (voice transcription)
 - `ELEVENLABS_API_KEY` (+ optional `ELEVENLABS_VOICE_ID`)
 
-If using Bring:
+If using the Bring app:
 
 - `BRING_EMAIL`
 - `BRING_PASSWORD`
@@ -59,34 +61,42 @@ If using Bring:
 
 ## Commands
 
+If running in a sandboxed/CI/container environment, set:
+
+```bash
+export GOCACHE=/tmp/go-build-cache
+export GOMODCACHE=/tmp/go-mod-cache
+export GOPATH=/tmp/go
+```
+
 Run server:
 
 ```bash
-GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/server
+go run ./cmd/server
 ```
 
 Run CLI:
 
 ```bash
-GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/jarvisctl --help
+go run ./cmd/jarvisctl --help
 ```
 
 Examples:
 
 ```bash
 # Send message
-GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/jarvisctl telegram send-text --chat 123456 --text "hello"
+go run ./cmd/jarvisctl telegram send-text --chat 123456 --text "hello"
 
 # Add scheduled prompt
-GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/jarvisctl schedule add \
+go run ./cmd/jarvisctl schedule add \
   --id morning-check --chat 123456 --prompt "do a quick check-in" --mode cron --cron "0 9 * * *" --tz Europe/Vienna
 
 # List schedules
-GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/jarvisctl schedule list
+go run ./cmd/jarvisctl schedule list
 
 # Bring list and add
-GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/jarvisctl bring list
-GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run ./cmd/jarvisctl bring add "Milk" "Eggs" "Butter:unsalted"
+go run ./cmd/jarvisctl bring list
+go run ./cmd/jarvisctl bring add "Milk" "Eggs" "Butter:unsalted"
 ```
 
 ## Data layout
@@ -100,6 +110,8 @@ GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go run .
 
 ## Tests
 
+If running in a sandboxed/CI/container environment, set the same env vars from the Commands section first.
+
 ```bash
-GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache GOPATH=/tmp/go go test ./...
+go test ./...
 ```
