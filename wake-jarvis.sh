@@ -249,6 +249,9 @@ fi
 if [[ -z "$(get_env_value "JARVIS_PHI_MODEL")" ]]; then
   upsert_env "JARVIS_PHI_MODEL" "gpt-5.3-codex"
 fi
+if [[ -z "$(get_env_value "JARVIS_PHI_THINKING")" ]]; then
+  upsert_env "JARVIS_PHI_THINKING" "xhigh"
+fi
 
 printf "Building jarvis binaries...\n"
 (
