@@ -3,7 +3,9 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +20,8 @@ import (
 	"github.com/zahlmann/phi/coding/session"
 	"github.com/zahlmann/phi/coding/tools"
 )
+
+var okTruePattern = regexp.MustCompile(`"ok"\s*:\s*true`)
 
 type PromptInput struct {
 	ChatID   int64
@@ -434,10 +438,41 @@ func telegramSendSucceeded(toolResult string) bool {
 	if trimmed == "" {
 		return false
 	}
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
-		return false
+
+	decoder := json.NewDecoder(strings.NewReader(trimmed))
+	for {
+		var parsed any
+		if err := decoder.Decode(&parsed); err != nil {
+			if err == io.EOF {
+				break
+			}
+			// Fallback for mixed outputs where JSON is embedded in plain text.
+			return okTruePattern.MatchString(trimmed)
+		}
+		if jsonValueHasOKTrue(parsed) {
+			return true
+		}
 	}
-	ok, _ := parsed["ok"].(bool)
-	return ok
+	return false
+}
+
+func jsonValueHasOKTrue(value any) bool {
+	switch v := value.(type) {
+	case map[string]any:
+		if ok, exists := v["ok"].(bool); exists && ok {
+			return true
+		}
+		for _, child := range v {
+			if jsonValueHasOKTrue(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if jsonValueHasOKTrue(child) {
+				return true
+			}
+		}
+	}
+	return false
 }
