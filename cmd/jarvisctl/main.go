@@ -283,6 +283,12 @@ func handleBring(args []string) {
 	if len(args) < 1 {
 		cli.Exitf("bring subcommand required")
 	}
+	if _, err := config.LoadWithOptions(config.LoadOptions{
+		RequireTelegramToken:  false,
+		RequirePhiCredentials: false,
+	}); err != nil {
+		cli.Exitf("config error: %v", err)
+	}
 	output, err := bring.Run(args)
 	if err != nil {
 		cli.Exitf("bring failed: %v", err)

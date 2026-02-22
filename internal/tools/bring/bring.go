@@ -1,6 +1,7 @@
 package bring
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ const (
 	defaultAPIBaseURL = "https://api.getbring.com/rest"
 	authPath          = "/v2/bringauth"
 	defaultLocale     = "en-US"
+	defaultListName   = "Bring list"
 
 	opAdd      = "TO_PURCHASE"
 	opComplete = "TO_RECENTLY"
@@ -42,12 +44,14 @@ type Client struct {
 
 	uuid       string
 	publicUUID string
+	authListID string
 	headers    map[string]string
 }
 
 type authResponse struct {
 	UUID        string `json:"uuid"`
 	PublicUUID  string `json:"publicUuid"`
+	ListUUID    string `json:"bringListUUID"`
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
 }
@@ -237,6 +241,7 @@ func (c *Client) login(ctx context.Context) error {
 
 	c.uuid = auth.UUID
 	c.publicUUID = auth.PublicUUID
+	c.authListID = strings.TrimSpace(auth.ListUUID)
 	c.headers["X-BRING-USER-UUID"] = auth.UUID
 	if strings.TrimSpace(auth.PublicUUID) != "" {
 		c.headers["X-BRING-PUBLIC-USER-UUID"] = auth.PublicUUID
@@ -252,6 +257,9 @@ func (c *Client) login(ctx context.Context) error {
 func (c *Client) resolveList(ctx context.Context) (string, string, error) {
 	if strings.TrimSpace(c.uuid) == "" {
 		return "", "", errors.New("not authenticated")
+	}
+	if c.listUUID == "" && c.listName == "" && c.authListID != "" {
+		return c.authListID, defaultListName, nil
 	}
 
 	endpoint := c.baseURL + "/bringusers/" + url.PathEscape(c.uuid) + "/lists"
@@ -325,10 +333,62 @@ func (c *Client) list(ctx context.Context, listUUID, listName string) (normalize
 }
 
 func (c *Client) batchUpdate(ctx context.Context, listUUID, itemID, spec, itemUUID, operation string) error {
-	endpoint := c.baseURL + "/bringlists/" + url.PathEscape(listUUID)
+	status, err := c.batchUpdateV2(ctx, listUUID, itemID, spec, itemUUID, operation)
+	if err != nil {
+		return fmt.Errorf("bring %s failed: %w", strings.ToLower(operation), err)
+	}
+	if status >= 200 && status < 300 {
+		return nil
+	}
+	legacyStatus, legacyErr := c.batchUpdateAt(ctx, c.baseURL+"/bringlists/"+url.PathEscape(listUUID), listUUID, itemID, spec, itemUUID, operation)
+	if legacyErr != nil {
+		return fmt.Errorf("bring %s failed: status=%d (fallback error: %v)", strings.ToLower(operation), status, legacyErr)
+	}
+	if legacyStatus >= 200 && legacyStatus < 300 {
+		return nil
+	}
+	return fmt.Errorf("bring %s failed: status=%d", strings.ToLower(operation), legacyStatus)
+}
+
+func (c *Client) batchUpdateV2(ctx context.Context, listUUID, itemID, spec, itemUUID, operation string) (int, error) {
+	change := map[string]string{
+		"accuracy":  "0.0",
+		"altitude":  "0.0",
+		"latitude":  "0.0",
+		"longitude": "0.0",
+		"itemId":    itemID,
+		"spec":      spec,
+		"operation": operation,
+	}
+	if strings.TrimSpace(itemUUID) != "" {
+		change["uuid"] = itemUUID
+	}
+	payload := map[string]any{
+		"changes": []map[string]string{change},
+		"sender":  "",
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+	endpoint := c.baseURL + "/v2/bringlists/" + url.PathEscape(listUUID) + "/items"
+	req, err := c.newRequest(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, nil
+}
+
+func (c *Client) batchUpdateAt(ctx context.Context, endpoint, listUUID, itemID, spec, itemUUID, operation string) (int, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	q := u.Query()
 	q.Set("listUuid", listUUID)
@@ -342,19 +402,17 @@ func (c *Client) batchUpdate(ctx context.Context, listUUID, itemID, spec, itemUU
 	}
 	u.RawQuery = q.Encode()
 
-	req, err := c.newRequest(ctx, http.MethodPost, u.String(), nil)
+	req, err := c.newRequest(ctx, http.MethodPost, u.String(), strings.NewReader(""))
 	if err != nil {
-		return err
+		return 0, err
 	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("bring %s failed: %w", strings.ToLower(operation), err)
+		return 0, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("bring %s failed: status=%d", strings.ToLower(operation), resp.StatusCode)
-	}
-	return nil
+	return resp.StatusCode, nil
 }
 
 func (c *Client) newRequest(ctx context.Context, method, endpoint string, body io.Reader) (*http.Request, error) {
@@ -388,6 +446,9 @@ func normalizeItemSlice(raw any) []normalizedItem {
 			continue
 		}
 		name, _ := m["itemId"].(string)
+		if strings.TrimSpace(name) == "" {
+			name, _ = m["name"].(string)
+		}
 		spec, _ := m["specification"].(string)
 		uuid, _ := m["uuid"].(string)
 		out = append(out, normalizedItem{Name: name, Spec: spec, UUID: uuid})

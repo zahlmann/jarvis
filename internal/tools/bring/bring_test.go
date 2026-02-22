@@ -64,8 +64,8 @@ func TestRunListWithTransportMock(t *testing.T) {
 	}
 }
 
-func TestBatchUpdateQuery(t *testing.T) {
-	var seen url.Values
+func TestBatchUpdateV2Payload(t *testing.T) {
+	var seen map[string]any
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.String() == "https://bring.test/rest/v2/bringauth":
@@ -75,8 +75,9 @@ func TestBatchUpdateQuery(t *testing.T) {
 				"access_token": "tok",
 				"token_type":   "Bearer",
 			})
-		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.String(), "https://bring.test/rest/bringlists/list-1?"):
-			seen = r.URL.Query()
+		case r.Method == http.MethodPut && r.URL.String() == "https://bring.test/rest/v2/bringlists/list-1/items":
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &seen)
 			return jsonResp(http.StatusOK, map[string]any{"ok": true})
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
@@ -98,14 +99,110 @@ func TestBatchUpdateQuery(t *testing.T) {
 	if err := c.batchUpdate(context.Background(), "list-1", "milk", "whole", "", opAdd); err != nil {
 		t.Fatalf("batchUpdate failed: %v", err)
 	}
-	if got := seen.Get("operationType"); got != opAdd {
-		t.Fatalf("unexpected operationType: %q", got)
+	changes, ok := seen["changes"].([]any)
+	if !ok || len(changes) != 1 {
+		t.Fatalf("unexpected changes payload: %#v", seen["changes"])
 	}
-	if got := seen.Get("itemContext"); got != "en-US" {
-		t.Fatalf("unexpected itemContext: %q", got)
+	change, ok := changes[0].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected change entry: %#v", changes[0])
 	}
-	if got := seen.Get("itemId"); got != "milk" {
+	if got, _ := change["operation"].(string); got != opAdd {
+		t.Fatalf("unexpected operation: %q", got)
+	}
+	if got, _ := change["itemId"].(string); got != "milk" {
 		t.Fatalf("unexpected itemId: %q", got)
+	}
+	if got, _ := change["spec"].(string); got != "whole" {
+		t.Fatalf("unexpected spec: %q", got)
+	}
+}
+
+func TestRunListUsesAuthListUUIDWhenListLookupUnavailable(t *testing.T) {
+	t.Setenv("BRING_EMAIL", "a@example.com")
+	t.Setenv("BRING_PASSWORD", "pw")
+	t.Setenv("BRING_ITEM_CONTEXT", "en-US")
+	t.Setenv("BRING_API_BASE_URL", "https://bring.test/rest")
+	t.Setenv("BRING_LIST_UUID", "")
+	t.Setenv("BRING_LIST_NAME", "")
+
+	origDefault := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.String() == "https://bring.test/rest/v2/bringauth":
+			return jsonResp(http.StatusOK, map[string]any{
+				"uuid":          "u1",
+				"publicUuid":    "p1",
+				"bringListUUID": "list-auth",
+				"access_token":  "tok",
+				"token_type":    "Bearer",
+			})
+		case r.Method == http.MethodGet && r.URL.String() == "https://bring.test/rest/v2/bringlists/list-auth":
+			return jsonResp(http.StatusOK, map[string]any{
+				"purchase": []map[string]any{{"name": "milk", "specification": "2%"}},
+				"recently": []map[string]any{},
+			})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.String(), "/bringusers/"):
+			t.Fatalf("unexpected list lookup endpoint call: %s", r.URL.String())
+			return nil, nil
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+			return nil, nil
+		}
+	})
+	defer func() { http.DefaultTransport = origDefault }()
+
+	out, err := Run([]string{"list", "--json"})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if !strings.Contains(out, "\"list_name\": \"Bring list\"") {
+		t.Fatalf("unexpected list name output: %s", out)
+	}
+	if !strings.Contains(out, "\"name\": \"milk\"") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+}
+
+func TestBatchUpdateFallbackToLegacyEndpoint(t *testing.T) {
+	calls := []string{}
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.String() == "https://bring.test/rest/v2/bringauth":
+			return jsonResp(http.StatusOK, map[string]any{
+				"uuid":         "u1",
+				"publicUuid":   "p1",
+				"access_token": "tok",
+				"token_type":   "Bearer",
+			})
+		case r.Method == http.MethodPut && r.URL.String() == "https://bring.test/rest/v2/bringlists/list-1/items":
+			calls = append(calls, "v2")
+			return jsonResp(http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.String(), "https://bring.test/rest/bringlists/list-1?"):
+			calls = append(calls, "legacy")
+			return jsonResp(http.StatusOK, map[string]any{"ok": true})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+			return nil, nil
+		}
+	})
+
+	c := &Client{
+		baseURL:     "https://bring.test/rest",
+		httpClient:  &http.Client{Transport: transport},
+		email:       "a@example.com",
+		password:    "pw",
+		itemContext: "en-US",
+		headers:     map[string]string{},
+	}
+	if err := c.login(context.Background()); err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+	if err := c.batchUpdate(context.Background(), "list-1", "milk", "whole", "", opAdd); err != nil {
+		t.Fatalf("batchUpdate failed: %v", err)
+	}
+	if len(calls) != 2 || calls[0] != "v2" || calls[1] != "legacy" {
+		t.Fatalf("unexpected endpoint call order: %v", calls)
 	}
 }
 
