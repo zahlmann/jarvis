@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zahlmann/jarvis-phi/internal/bring"
 	"github.com/zahlmann/jarvis-phi/internal/cli"
 	"github.com/zahlmann/jarvis-phi/internal/config"
 	"github.com/zahlmann/jarvis-phi/internal/logstore"
@@ -17,6 +16,7 @@ import (
 	"github.com/zahlmann/jarvis-phi/internal/scheduler"
 	"github.com/zahlmann/jarvis-phi/internal/store"
 	"github.com/zahlmann/jarvis-phi/internal/telegram"
+	"github.com/zahlmann/jarvis-phi/internal/tools/bring"
 )
 
 func main() {
