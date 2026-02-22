@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,7 @@ func main() {
 		log.Fatalf("config error: %v", err)
 	}
 	ensureBinPath()
+	ensureJarvisctlAvailable()
 
 	logger, err := logstore.New(filepath.Join(cfg.DataDir, "logs"))
 	if err != nil {
@@ -262,6 +264,13 @@ func (a *app) processNormalized(n telegram.NormalizedUpdate) {
 	})
 
 	a.runtime.Enqueue(input)
+}
+
+func ensureJarvisctlAvailable() {
+	if _, err := exec.LookPath("jarvisctl"); err == nil {
+		return
+	}
+	log.Fatalf("jarvisctl is required but was not found in PATH; build it with `go build -o ./bin/jarvisctl ./cmd/jarvisctl` or run `./wake-jarvis.sh`")
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

@@ -152,7 +152,6 @@ func defaultPrompt() string {
 		"Always use CLI-first workflows via bash when taking actions.",
 		"To send anything to Telegram, explicitly call `jarvisctl telegram ...` using bash.",
 		"For each inbound Telegram message, send at least one reply via `jarvisctl telegram send-text --chat <Chat ID> --text ...` unless the user explicitly asks for silence.",
-		"If `jarvisctl` is unavailable, fallback to `go run ./cmd/jarvisctl -- telegram send-text --chat <Chat ID> --text ...`.",
 		"Do not assume your final assistant text is delivered to the user.",
 		"If you do not call a telegram send command, nothing is sent.",
 		"Use --help when exploring unfamiliar CLI commands.",
