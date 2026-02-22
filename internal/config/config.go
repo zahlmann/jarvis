@@ -131,10 +131,6 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 		HeartbeatPrompt:      heartbeatPrompt,
 	}
 
-	if customPrompt := strings.TrimSpace(os.Getenv("JARVIS_PHI_SYSTEM_PROMPT")); customPrompt != "" {
-		cfg.PhiSystemPrompt = customPrompt
-	}
-
 	if opts.RequireTelegramToken && cfg.TelegramBotToken == "" {
 		return Config{}, fmt.Errorf("TELEGRAM_BOT_TOKEN is required")
 	}
