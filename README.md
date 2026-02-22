@@ -58,7 +58,7 @@ Feature toggles:
 
 - `JARVIS_PHI_TRANSCRIPTION_ENABLED` controls inbound voice transcription handling
 - `JARVIS_PHI_VOICE_REPLY_ENABLED` controls `jarvisctl telegram send-voice`
-- `JARVIS_PHI_THINKING` controls model reasoning effort (`off|minimal|low|medium|high|xhigh`, default `xhigh`)
+- `JARVIS_PHI_THINKING` controls model reasoning effort (`none|minimal|low|medium|high|xhigh`, default `xhigh`)
 
 If using voice:
 

@@ -181,8 +181,8 @@ func defaultPrompt(userName string) string {
 
 func parseThinkingLevel(raw string) agent.ThinkingLevel {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "off":
-		return agent.ThinkingOff
+	case "none":
+		return agent.ThinkingNone
 	case "minimal":
 		return agent.ThinkingMinimal
 	case "low":
