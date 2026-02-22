@@ -95,6 +95,21 @@ func TestDefaultPromptStandaloneWorkspaceRules(t *testing.T) {
 	}
 }
 
+func TestDefaultPromptTypingAndFormattingPreferences(t *testing.T) {
+	prompt := defaultPrompt("alex")
+	required := []string{
+		"Before each Telegram reply, always send typing status first",
+		"`./bin/jarvisctl telegram typing --chat <Chat ID>`",
+		"use markdown-style text patterns",
+		"`\\n` and `/n` style separators",
+	}
+	for _, fragment := range required {
+		if !strings.Contains(prompt, fragment) {
+			t.Fatalf("defaultPrompt missing %q", fragment)
+		}
+	}
+}
+
 func TestDefaultHeartbeatPromptCleanupCriteria(t *testing.T) {
 	prompt := defaultHeartbeatPrompt()
 	required := []string{

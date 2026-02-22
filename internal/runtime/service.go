@@ -330,7 +330,7 @@ func (s *Service) buildNoSendRecoveryEnvelope(input PromptInput, attempt int) st
 		fmt.Sprintf("[Retry attempt: %d]", attempt),
 		fmt.Sprintf("[Chat ID: %d]", input.ChatID),
 		fmt.Sprintf("[Local time: %s]", now.Format("2006-01-02 15:04 MST")),
-		"[Requirement: execute at least one successful `./bin/jarvisctl telegram send-text --chat <Chat ID> --text ...` command via bash now.]",
+		"[Requirement: execute `./bin/jarvisctl telegram typing --chat <Chat ID>` first, then at least one successful `./bin/jarvisctl telegram send-text --chat <Chat ID> --text ...` command via bash now.]",
 		"[Do not return an empty assistant response.]",
 		"[If the user just confirmed a prior yes/no question, continue with the requested action instead of asking the same confirmation again.]",
 		"",
