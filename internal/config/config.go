@@ -97,10 +97,7 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 	}
 
 	heartbeatEnabled := parseBoolDefault("JARVIS_PHI_HEARTBEAT_ENABLED", true)
-	heartbeatPrompt := strings.TrimSpace(os.Getenv("JARVIS_PHI_HEARTBEAT_PROMPT"))
-	if heartbeatPrompt == "" {
-		heartbeatPrompt = "Heartbeat check-in: review recent context, decide whether to message, and if messaging is useful send explicitly via jarvisctl telegram command(s)."
-	}
+	heartbeatPrompt := defaultHeartbeatPrompt()
 
 	thinking := parseThinkingLevel(os.Getenv("JARVIS_PHI_THINKING"))
 	openAIKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
@@ -180,6 +177,10 @@ func defaultPrompt(userName string) string {
 		"When scheduling tasks, use `./bin/jarvisctl schedule ...` and keep schedules precise.",
 		"Maintain concise, useful communication and rely on logs/artifacts for memory.",
 	}, " ")
+}
+
+func defaultHeartbeatPrompt() string {
+	return "Heartbeat check-in: review recent context and local time. If there is anything useful, caring, or timely to say, send it now via jarvisctl telegram command(s), using short natural messages. Skip only if it is quiet hours (00:00-08:00 local) or there is truly nothing meaningful to add."
 }
 
 func parseThinkingLevel(raw string) agent.ThinkingLevel {
