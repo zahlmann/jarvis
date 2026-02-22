@@ -64,3 +64,33 @@ func TestLoadWithOptionsMemoryEmbeddingModelDefault(t *testing.T) {
 		t.Fatalf("MemoryEmbeddingModel=%q want=%q", cfg.MemoryEmbeddingModel, "text-embedding-3-small")
 	}
 }
+
+func TestDefaultPromptBehaviorChangesStayOutOfMemory(t *testing.T) {
+	prompt := defaultPrompt("alex")
+	required := []string{
+		"change your own behavior",
+		"do not save that request as memory",
+		"worth looking up later",
+	}
+	for _, fragment := range required {
+		if !strings.Contains(prompt, fragment) {
+			t.Fatalf("defaultPrompt missing %q", fragment)
+		}
+	}
+}
+
+func TestDefaultHeartbeatPromptCleanupCriteria(t *testing.T) {
+	prompt := defaultHeartbeatPrompt()
+	required := []string{
+		"deleting duplicates",
+		"superseded by newer info",
+		"completed or expired items",
+		"low-retrieval-value one-off chatter",
+		"clearly incorrect entries",
+	}
+	for _, fragment := range required {
+		if !strings.Contains(prompt, fragment) {
+			t.Fatalf("defaultHeartbeatPrompt missing %q", fragment)
+		}
+	}
+}
