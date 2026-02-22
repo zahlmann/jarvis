@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -38,8 +39,9 @@ type Service struct {
 	mu       sync.Mutex
 	sessions map[int64]*chatSession
 
-	trackMu    sync.Mutex
-	sendCalled map[int64]bool
+	trackMu          sync.Mutex
+	sendCalled       map[int64]bool
+	pendingSendCalls map[int64]map[string]struct{}
 }
 
 type chatSession struct {
@@ -55,11 +57,12 @@ type chatSession struct {
 
 func New(cfg config.Config, logger *logstore.Store) *Service {
 	return &Service{
-		cfg:        cfg,
-		logger:     logger,
-		provider:   provider.NewOpenAIClient(),
-		sessions:   map[int64]*chatSession{},
-		sendCalled: map[int64]bool{},
+		cfg:              cfg,
+		logger:           logger,
+		provider:         provider.NewOpenAIClient(),
+		sessions:         map[int64]*chatSession{},
+		sendCalled:       map[int64]bool{},
+		pendingSendCalls: map[int64]map[string]struct{}{},
 	}
 }
 
@@ -133,7 +136,6 @@ func (s *Service) runPrompt(cs *chatSession, input PromptInput) error {
 		return err
 	}
 
-	envelope := s.buildPromptEnvelope(input)
 	_ = s.logger.Write("runtime", "prompt_start", map[string]any{
 		"chat_id": cs.chatID,
 		"source":  input.Source,
@@ -141,23 +143,44 @@ func (s *Service) runPrompt(cs *chatSession, input PromptInput) error {
 		"chars":   len(input.Message),
 	})
 
-	s.setSendCalled(cs.chatID, false)
-	err = agentSession.Prompt(envelope, sdk.PromptOptions{Images: input.Images})
-	if err != nil {
-		return err
+	requireTelegramSend := strings.EqualFold(strings.TrimSpace(input.Source), "telegram")
+	maxAttempts := 1
+	if requireTelegramSend {
+		maxAttempts = 2
 	}
-	if !s.getSendCalled(cs.chatID) {
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		envelope := s.buildPromptEnvelope(input)
+		if attempt > 1 {
+			envelope = s.buildNoSendRecoveryEnvelope(input, attempt)
+			_ = s.logger.Write("runtime", "retry_prompt_after_no_send", map[string]any{
+				"chat_id": cs.chatID,
+				"source":  input.Source,
+				"attempt": attempt,
+			})
+		}
+
+		s.resetSendTracking(cs.chatID)
+		if err := agentSession.Prompt(envelope, sdk.PromptOptions{Images: input.Images}); err != nil {
+			return err
+		}
+		if !requireTelegramSend || s.getSendCalled(cs.chatID) {
+			_ = s.logger.Write("runtime", "prompt_end", map[string]any{
+				"chat_id":  cs.chatID,
+				"source":   input.Source,
+				"attempts": attempt,
+			})
+			return nil
+		}
+
 		_ = s.logger.Write("runtime", "no_explicit_send", map[string]any{
 			"chat_id": cs.chatID,
 			"source":  input.Source,
+			"attempt": attempt,
 		})
 	}
 
-	_ = s.logger.Write("runtime", "prompt_end", map[string]any{
-		"chat_id": cs.chatID,
-		"source":  input.Source,
-	})
-	return nil
+	return fmt.Errorf("no successful telegram send command after %d attempt(s)", maxAttempts)
 }
 
 func (s *Service) ensureSession(cs *chatSession) (*sdk.AgentSession, error) {
@@ -244,6 +267,27 @@ func (s *Service) buildPromptEnvelope(input PromptInput) string {
 	return strings.Join(parts, "\n")
 }
 
+func (s *Service) buildNoSendRecoveryEnvelope(input PromptInput, attempt int) string {
+	loc := time.UTC
+	if tz, err := time.LoadLocation(s.cfg.Timezone); err == nil {
+		loc = tz
+	}
+	now := time.Now().In(loc)
+
+	parts := []string{
+		"[System follow-up: the previous completion ended without sending a Telegram reply.]",
+		fmt.Sprintf("[Retry attempt: %d]", attempt),
+		fmt.Sprintf("[Chat ID: %d]", input.ChatID),
+		fmt.Sprintf("[Local time: %s]", now.Format("2006-01-02 15:04 MST")),
+		"[Requirement: execute at least one successful `./bin/jarvisctl telegram send-text --chat <Chat ID> --text ...` command via bash now.]",
+		"[Do not return an empty assistant response.]",
+		"[If the user just confirmed a prior yes/no question, continue with the requested action instead of asking the same confirmation again.]",
+		"",
+		"Original message: " + input.Message,
+	}
+	return strings.Join(parts, "\n")
+}
+
 func (s *Service) logAgentEvent(chatID int64, ev agent.Event) {
 	fields := map[string]any{
 		"chat_id":    chatID,
@@ -279,7 +323,7 @@ func (s *Service) logAgentEvent(chatID int64, ev agent.Event) {
 		if se.Type == stream.EventToolCall && strings.EqualFold(se.ToolName, "bash") {
 			cmd, _ := se.Arguments["command"].(string)
 			if looksLikeTelegramSend(cmd) {
-				s.setSendCalled(chatID, true)
+				s.markPendingSendCall(chatID, se.ToolCallID)
 			}
 		}
 	}
@@ -293,7 +337,11 @@ func (s *Service) logAgentEvent(chatID int64, ev agent.Event) {
 		fields["stop_reason"] = string(msg.StopReason)
 	case model.Message:
 		if msg.Role == model.RoleToolResult {
-			fields["tool_result"] = extractText(msg.ContentRaw)
+			toolResult := extractText(msg.ContentRaw)
+			fields["tool_result"] = toolResult
+			if ev.ToolCallID != "" && s.consumePendingSendCall(chatID, ev.ToolCallID) && telegramSendSucceeded(toolResult) {
+				s.setSendCalled(chatID, true)
+			}
 		}
 	}
 
@@ -311,6 +359,47 @@ func (s *Service) setSendCalled(chatID int64, value bool) {
 	s.trackMu.Lock()
 	defer s.trackMu.Unlock()
 	s.sendCalled[chatID] = value
+}
+
+func (s *Service) resetSendTracking(chatID int64) {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	s.sendCalled[chatID] = false
+	delete(s.pendingSendCalls, chatID)
+}
+
+func (s *Service) markPendingSendCall(chatID int64, toolCallID string) {
+	if strings.TrimSpace(toolCallID) == "" {
+		return
+	}
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	pending := s.pendingSendCalls[chatID]
+	if pending == nil {
+		pending = map[string]struct{}{}
+		s.pendingSendCalls[chatID] = pending
+	}
+	pending[toolCallID] = struct{}{}
+}
+
+func (s *Service) consumePendingSendCall(chatID int64, toolCallID string) bool {
+	if strings.TrimSpace(toolCallID) == "" {
+		return false
+	}
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	pending := s.pendingSendCalls[chatID]
+	if pending == nil {
+		return false
+	}
+	if _, ok := pending[toolCallID]; !ok {
+		return false
+	}
+	delete(pending, toolCallID)
+	if len(pending) == 0 {
+		delete(s.pendingSendCalls, chatID)
+	}
+	return true
 }
 
 func (s *Service) getSendCalled(chatID int64) bool {
@@ -338,4 +427,17 @@ func extractText(content []any) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func telegramSendSucceeded(toolResult string) bool {
+	trimmed := strings.TrimSpace(toolResult)
+	if trimmed == "" {
+		return false
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
+		return false
+	}
+	ok, _ := parsed["ok"].(bool)
+	return ok
 }
