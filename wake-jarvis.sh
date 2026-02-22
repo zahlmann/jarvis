@@ -193,14 +193,6 @@ elif [[ -z "$chatgpt_token" && -f "$chatgpt_store" ]]; then
   printf "Found existing ChatGPT tokens at %s, no token prompt needed.\n" "$chatgpt_store"
 fi
 
-if [[ -z "$(get_env_value "PHI_CHATGPT_ACCOUNT_ID")" ]]; then
-  read -r -p "ChatGPT account id (optional, press Enter to skip): " account_id
-  account_id="$(trim "$account_id")"
-  if [[ -n "$account_id" ]]; then
-    upsert_env "PHI_CHATGPT_ACCOUNT_ID" "$account_id"
-  fi
-fi
-
 openai_key="$(get_env_value "OPENAI_API_KEY")"
 if [[ -n "$openai_key" ]]; then
   printf "OPENAI_API_KEY already configured, voice transcription will stay enabled.\n"
