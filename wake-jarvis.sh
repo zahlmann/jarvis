@@ -252,17 +252,11 @@ fi
 
 openai_key="$(get_env_value "OPENAI_API_KEY")"
 if [[ -n "$openai_key" ]]; then
-  printf "OPENAI_API_KEY already configured, voice transcription will stay enabled.\n"
-  upsert_env "JARVIS_PHI_TRANSCRIPTION_ENABLED" "true"
+  printf "OPENAI_API_KEY already configured.\n"
 else
-  if ask_yes_no "do you want jarvis to be able to understand your voice messages? (OpenAI API Key needed)" "n"; then
-    prompt_value "OPENAI_API_KEY" "OpenAI API Key" true
-    upsert_env "JARVIS_PHI_TRANSCRIPTION_ENABLED" "true"
-  else
-    upsert_env "OPENAI_API_KEY" ""
-    upsert_env "JARVIS_PHI_TRANSCRIPTION_ENABLED" "false"
-  fi
+  prompt_value "OPENAI_API_KEY" "OpenAI API Key (required for memory + voice transcription)" true
 fi
+upsert_env "JARVIS_PHI_TRANSCRIPTION_ENABLED" "true"
 
 if ask_yes_no "do you want jarvis to be able to talk to you via voice messages? (ElevenLabs API Key needed)" "n"; then
   prompt_value "ELEVENLABS_API_KEY" "ElevenLabs API Key" true

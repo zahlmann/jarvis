@@ -34,6 +34,7 @@ type Config struct {
 	DefaultChatID int64
 
 	OpenAIAPIKey         string
+	MemoryEmbeddingModel string
 	TranscriptionEnabled bool
 	ElevenLabsAPIKey     string
 	ElevenLabsVoiceID    string
@@ -126,12 +127,17 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 		PhiAccountID:         strings.TrimSpace(os.Getenv("PHI_CHATGPT_ACCOUNT_ID")),
 		DefaultChatID:        defaultChatID,
 		OpenAIAPIKey:         openAIKey,
-		TranscriptionEnabled: parseBoolDefault("JARVIS_PHI_TRANSCRIPTION_ENABLED", openAIKey != ""),
+		MemoryEmbeddingModel: defaultString("JARVIS_PHI_MEMORY_EMBEDDING_MODEL", "text-embedding-3-small"),
+		TranscriptionEnabled: parseBoolDefault("JARVIS_PHI_TRANSCRIPTION_ENABLED", true),
 		ElevenLabsAPIKey:     elevenLabsKey,
 		ElevenLabsVoiceID:    defaultString("ELEVENLABS_VOICE_ID", "EkK5I93UQWFDigLMpZcX"),
 		VoiceReplyEnabled:    parseBoolDefault("JARVIS_PHI_VOICE_REPLY_ENABLED", elevenLabsKey != ""),
 		HeartbeatEnabled:     heartbeatEnabled,
 		HeartbeatPrompt:      heartbeatPrompt,
+	}
+
+	if strings.TrimSpace(cfg.OpenAIAPIKey) == "" {
+		return Config{}, fmt.Errorf("OPENAI_API_KEY is required")
 	}
 
 	if opts.RequireTelegramToken && cfg.TelegramBotToken == "" {
@@ -178,12 +184,17 @@ func defaultPrompt(userName string) string {
 		"When the user mentions grocery/shopping list intent (e.g. einkaufsliste, shopping list, bring list, add/remove items on the list), use `./bin/jarvisctl bring ...` via bash.",
 		"For Bring operations, use exact subcommands: `bring list`, `bring add <item...>`, `bring remove <item...>`, `bring complete <item...>`.",
 		"After Bring commands, send a short Telegram confirmation with what was changed or why it failed.",
+		"Memory is core behavior: for most inbound user messages, first run `./bin/jarvisctl memory retrieve --query \"<message>\"` and use relevant results.",
+		"When the user shares durable preferences, personal facts, ongoing projects, constraints, or plans, save them with `./bin/jarvisctl memory save --keywords \"k1,k2,...\" --memory \"...\"`.",
+		"Use concise, searchable keywords that maximize retrieval quality.",
+		"Memory cleanup is allowed: review with `./bin/jarvisctl memory list` and delete stale/incorrect entries using `./bin/jarvisctl memory remove --id <memory-id>`.",
+		"Never store secrets, passwords, private keys, tokens, or highly sensitive data in memory.",
 		"Maintain concise, useful communication and rely on logs/artifacts for memory.",
 	}, " ")
 }
 
 func defaultHeartbeatPrompt() string {
-	return "Heartbeat check-in: review recent context and local time. If there is anything useful, caring, or timely to say, send it now via jarvisctl telegram command(s), using short natural messages. Skip only if it is quiet hours (00:00-08:00 local) or there is truly nothing meaningful to add."
+	return "Heartbeat check-in: review recent context, local time, and long-term memory. Run memory retrieval/list commands to identify stale or duplicate memories, remove low-value items, and spot anything timely worth messaging the user about. If there is anything useful, caring, or timely to say, send it now via jarvisctl telegram command(s), using short natural messages. Skip only if it is quiet hours (00:00-08:00 local) or there is truly nothing meaningful to add."
 }
 
 func parseThinkingLevel(raw string) agent.ThinkingLevel {

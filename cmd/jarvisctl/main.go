@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/zahlmann/jarvis-phi/internal/config"
 	"github.com/zahlmann/jarvis-phi/internal/logstore"
 	"github.com/zahlmann/jarvis-phi/internal/media"
+	"github.com/zahlmann/jarvis-phi/internal/memory"
 	"github.com/zahlmann/jarvis-phi/internal/scheduler"
 	"github.com/zahlmann/jarvis-phi/internal/store"
 	"github.com/zahlmann/jarvis-phi/internal/telegram"
@@ -32,6 +34,8 @@ func main() {
 		handleSchedule(os.Args[2:])
 	case "bring":
 		handleBring(os.Args[2:])
+	case "memory":
+		handleMemory(os.Args[2:])
 	default:
 		usage()
 		os.Exit(1)
@@ -46,7 +50,8 @@ func usage() {
   telegram send-photo --chat <id> --path <file> [--caption <text>]
   telegram set-webhook --url <https-url>/telegram/webhook
   schedule add|update|remove|list|run-due
-  bring list|add|remove|complete ...`)
+  bring list|add|remove|complete ...
+  memory save|retrieve|list|remove ...`)
 }
 
 func handleTelegram(args []string) {
@@ -294,4 +299,129 @@ func handleBring(args []string) {
 		cli.Exitf("bring failed: %v", err)
 	}
 	fmt.Println(output)
+}
+
+func handleMemory(args []string) {
+	if len(args) < 1 {
+		cli.Exitf("memory subcommand required")
+	}
+	cfg, err := config.LoadWithOptions(config.LoadOptions{
+		RequireTelegramToken:  false,
+		RequirePhiCredentials: false,
+	})
+	if err != nil {
+		cli.Exitf("config error: %v", err)
+	}
+	logger, err := logstore.New(filepath.Join(cfg.DataDir, "logs"))
+	if err != nil {
+		cli.Exitf("log store error: %v", err)
+	}
+	st, err := memory.NewStore(filepath.Join(cfg.DataDir, "memory", "memories.parquet"))
+	if err != nil {
+		cli.Exitf("memory store error: %v", err)
+	}
+
+	sub := args[0]
+	switch sub {
+	case "save":
+		fs := flag.NewFlagSet("save", flag.ExitOnError)
+		keywords := fs.String("keywords", "", "comma-separated keywords")
+		memText := fs.String("memory", "", "full memory text")
+		_ = fs.Parse(args[1:])
+
+		keywordsList := memory.NormalizeKeywords([]string{*keywords})
+		if len(keywordsList) == 0 || strings.TrimSpace(*memText) == "" {
+			cli.Exitf("--keywords and --memory are required")
+		}
+
+		rec, err := st.Save(keywordsList, *memText, time.Now().UTC())
+		if err != nil {
+			cli.Exitf("memory save failed: %v", err)
+		}
+		_ = logger.Write("memory_cli", "save", map[string]any{
+			"id":       rec.ID,
+			"keywords": rec.Keywords,
+			"chars":    len(rec.Memory),
+		})
+		cli.PrintJSON(rec)
+
+	case "retrieve":
+		fs := flag.NewFlagSet("retrieve", flag.ExitOnError)
+		query := fs.String("query", "", "search query")
+		limit := fs.Int("limit", 8, "max number of results")
+		minScore := fs.Float64("min-score", 0.20, "minimum cosine score to include")
+		_ = fs.Parse(args[1:])
+
+		queryText := strings.TrimSpace(*query)
+		if queryText == "" {
+			cli.Exitf("--query is required")
+		}
+
+		embedder, err := memory.NewOpenAIEmbedder(cfg.OpenAIAPIKey, cfg.MemoryEmbeddingModel)
+		if err != nil {
+			cli.Exitf("memory embedder error: %v", err)
+		}
+		queryEmbedding, err := embedder.Embed(context.Background(), queryText)
+		if err != nil {
+			cli.Exitf("memory query embedding failed: %v", err)
+		}
+
+		results, err := st.Search(queryEmbedding, *limit)
+		if err != nil {
+			cli.Exitf("memory retrieve failed: %v", err)
+		}
+		filtered := make([]memory.SearchResult, 0, len(results))
+		for _, result := range results {
+			if result.Score >= *minScore {
+				filtered = append(filtered, result)
+			}
+		}
+
+		_ = logger.Write("memory_cli", "retrieve", map[string]any{
+			"query":        queryText,
+			"limit":        *limit,
+			"result_count": len(filtered),
+		})
+		cli.PrintJSON(map[string]any{
+			"query":     queryText,
+			"limit":     *limit,
+			"min_score": *minScore,
+			"results":   filtered,
+		})
+
+	case "list":
+		fs := flag.NewFlagSet("list", flag.ExitOnError)
+		limit := fs.Int("limit", 100, "max rows")
+		_ = fs.Parse(args[1:])
+
+		rows, err := st.List()
+		if err != nil {
+			cli.Exitf("memory list failed: %v", err)
+		}
+		sort.Slice(rows, func(i, j int) bool {
+			return rows[i].CreatedAt > rows[j].CreatedAt
+		})
+		if *limit > 0 && *limit < len(rows) {
+			rows = rows[:*limit]
+		}
+		cli.PrintJSON(map[string]any{"memories": rows})
+
+	case "remove":
+		fs := flag.NewFlagSet("remove", flag.ExitOnError)
+		id := fs.String("id", "", "memory id")
+		_ = fs.Parse(args[1:])
+		if strings.TrimSpace(*id) == "" {
+			cli.Exitf("--id is required")
+		}
+
+		removed, err := st.Remove(*id)
+		if err != nil {
+			cli.Exitf("memory remove failed: %v", err)
+		}
+		_ = logger.Write("memory_cli", "remove", map[string]any{"id": *id, "removed": removed})
+		cli.PrintJSON(map[string]any{"ok": true, "removed": removed})
+
+	default:
+		cli.Exitf("unknown memory command: %s", sub)
+	}
 }

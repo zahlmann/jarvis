@@ -19,6 +19,7 @@ import (
 	"github.com/zahlmann/jarvis-phi/internal/config"
 	"github.com/zahlmann/jarvis-phi/internal/logstore"
 	"github.com/zahlmann/jarvis-phi/internal/media"
+	"github.com/zahlmann/jarvis-phi/internal/memory"
 	"github.com/zahlmann/jarvis-phi/internal/runtime"
 	"github.com/zahlmann/jarvis-phi/internal/scheduler"
 	"github.com/zahlmann/jarvis-phi/internal/store"
@@ -56,6 +57,14 @@ func main() {
 	msgIndex, err := store.NewMessageIndex(filepath.Join(cfg.DataDir, "messages", "index.json"))
 	if err != nil {
 		log.Fatalf("message index error: %v", err)
+	}
+	memStore, err := memory.NewStore(filepath.Join(cfg.DataDir, "memory", "memories.parquet"))
+	if err != nil {
+		log.Fatalf("memory store error: %v", err)
+	}
+	memEmbedder, err := memory.NewOpenAIEmbedder(cfg.OpenAIAPIKey, cfg.MemoryEmbeddingModel)
+	if err != nil {
+		log.Fatalf("memory embedder error: %v", err)
 	}
 
 	tgClient := telegram.NewClient(cfg.TelegramBotToken, cfg.TelegramAPIBase)
@@ -106,6 +115,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	engine.Start(ctx)
+	go runMemoryEmbeddingLoop(ctx, memStore, memEmbedder, logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", application.healthz)
@@ -303,4 +313,40 @@ func ensureBinPath() {
 		return
 	}
 	_ = os.Setenv("PATH", binDir+string(os.PathListSeparator)+current)
+}
+
+func runMemoryEmbeddingLoop(ctx context.Context, st *memory.Store, embedder memory.Embedder, logger *logstore.Store) {
+	if st == nil || embedder == nil {
+		return
+	}
+
+	run := func() {
+		runCtx, cancel := context.WithTimeout(ctx, 50*time.Second)
+		defer cancel()
+
+		updated, err := st.BackfillEmbeddings(runCtx, embedder, 20)
+		if err != nil {
+			if runCtx.Err() != nil || ctx.Err() != nil {
+				return
+			}
+			_ = logger.Write("memory", "embed_backfill_error", map[string]any{"error": err.Error()})
+			return
+		}
+		if updated > 0 {
+			_ = logger.Write("memory", "embed_backfill_ok", map[string]any{"updated": updated})
+		}
+	}
+
+	run()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
 }
