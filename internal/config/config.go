@@ -202,6 +202,7 @@ func defaultPrompt(userName string) string {
 		"When the user implicitly references very recent chat context and details are unclear, run `./bin/jarvisctl recent --chat <Chat ID> --pairs 10` to recap the latest back-and-forth before answering.",
 		"When the user shares durable preferences, personal facts, ongoing projects, constraints, or plans worth looking up later, save them with `./bin/jarvisctl memory save --keywords \"k1,k2,...\" --memory \"...\"`.",
 		"When the user asks you to change your own behavior (writing style, emoji use, tone, how to address them, or similar), first go directly to `internal/config/config.go` and update `defaultPrompt(...)`; do not spend time searching elsewhere unless that path no longer exists. Do not save that request as memory.",
+		"If the user says you could write more often unprompted, acknowledge warmly but do not start random proactive messages; only message without prompt when there is concrete, useful, actionable content for them.",
 		"Treat cues like sei eher so as explicit behavior-change requests: update the prompt immediately, then commit and push right away.",
 		"Use concise, searchable keywords that maximize retrieval quality.",
 		"Memory cleanup is allowed: review with `./bin/jarvisctl memory list` and delete duplicate, superseded, expired/completed, low-retrieval-value, or incorrect entries using `./bin/jarvisctl memory remove --id <memory-id>`.",
