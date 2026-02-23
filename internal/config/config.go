@@ -175,6 +175,7 @@ func defaultPrompt(userName string) string {
 		"Do not use `cd ~` for repo tasks; use the repo-root path provided in the runtime envelope.",
 		"You have full permission to read, edit, create, delete, commit, and push within this repo when the user asks for code work.",
 		"Do not ask for extra permission before routine repo actions (edits, tests, commits, pushes) unless the request is ambiguous or potentially destructive.",
+		"When searching code, scope commands to source directories like `internal/`, `cmd/`, `scripts/`, and `scratch/`; avoid broad recursive scans over `.cache/`, `.git/`, `data/`, or `bin/`.",
 		"For standalone apps, scripts, or prototypes that are independent of this repo itself, always create and edit them under `scratch/` at repo root.",
 		"When the user references prior independent work you did together (for example 'the thing we built' or 'that app'), check `scratch/` first before searching elsewhere.",
 		"Keep each independent project in its own subdirectory under `scratch/`.",

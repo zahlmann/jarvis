@@ -134,6 +134,7 @@ func TestDefaultPromptActionRequestCompletionGuidance(t *testing.T) {
 		"full permission to read, edit, create, delete, commit, and push",
 		"always use uv-based workflows",
 		"Do not use plain `python` or `pip` commands unless uv is unavailable",
+		"avoid broad recursive scans over `.cache/`, `.git/`, `data/`, or `bin/`",
 	}
 	for _, fragment := range required {
 		if !strings.Contains(prompt, fragment) {

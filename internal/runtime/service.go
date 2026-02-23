@@ -52,11 +52,31 @@ type Service struct {
 	mu       sync.Mutex
 	sessions map[int64]*chatSession
 
-	trackMu          sync.Mutex
-	sendCalled       map[int64]bool
-	pendingSendCalls map[int64]map[string]struct{}
+	trackMu  sync.Mutex
+	attempts map[int64]*attemptTracking
 
 	recent *store.RecentStore
+}
+
+type callKind uint8
+
+const (
+	callKindUnknown callKind = iota
+	callKindSend
+	callKindWork
+)
+
+type attemptTracking struct {
+	pendingCalls map[string]callKind
+	sequence     int
+	lastSendSeq  int
+	lastWorkSeq  int
+	sendCalled   bool
+}
+
+type attemptStatus struct {
+	sendCalled    bool
+	sendAfterWork bool
 }
 
 type chatSession struct {
@@ -78,13 +98,12 @@ func New(cfg config.Config, logger *logstore.Store) *Service {
 	}
 
 	return &Service{
-		cfg:              cfg,
-		logger:           logger,
-		provider:         provider.NewOpenAIClient(),
-		sessions:         map[int64]*chatSession{},
-		sendCalled:       map[int64]bool{},
-		pendingSendCalls: map[int64]map[string]struct{}{},
-		recent:           recentStore,
+		cfg:      cfg,
+		logger:   logger,
+		provider: provider.NewOpenAIClient(),
+		sessions: map[int64]*chatSession{},
+		attempts: map[int64]*attemptTracking{},
+		recent:   recentStore,
 	}
 }
 
@@ -189,7 +208,8 @@ func (s *Service) runPrompt(cs *chatSession, input PromptInput) error {
 		if err := agentSession.Prompt(envelope, sdk.PromptOptions{Images: input.Images}); err != nil {
 			return err
 		}
-		if !requireTelegramSend || s.getSendCalled(cs.chatID) {
+		status := s.getAttemptStatus(cs.chatID)
+		if !requireTelegramSend || (status.sendCalled && status.sendAfterWork) {
 			_ = s.logger.Write("runtime", "prompt_end", map[string]any{
 				"chat_id":  cs.chatID,
 				"source":   input.Source,
@@ -198,11 +218,23 @@ func (s *Service) runPrompt(cs *chatSession, input PromptInput) error {
 			return nil
 		}
 
-		_ = s.logger.Write("runtime", "no_explicit_send", map[string]any{
-			"chat_id": cs.chatID,
-			"source":  input.Source,
-			"attempt": attempt,
-		})
+		if !status.sendCalled {
+			_ = s.logger.Write("runtime", "no_explicit_send", map[string]any{
+				"chat_id": cs.chatID,
+				"source":  input.Source,
+				"attempt": attempt,
+			})
+		} else {
+			_ = s.logger.Write("runtime", "send_not_final", map[string]any{
+				"chat_id": cs.chatID,
+				"source":  input.Source,
+				"attempt": attempt,
+			})
+		}
+	}
+	status := s.getAttemptStatus(cs.chatID)
+	if status.sendCalled && !status.sendAfterWork {
+		return fmt.Errorf("telegram send happened before work completion; no final send after work in %d attempt(s)", maxAttempts)
 	}
 	return fmt.Errorf("no successful telegram send command after %d attempt(s)", maxAttempts)
 }
@@ -424,6 +456,8 @@ func (s *Service) buildNoSendRecoveryEnvelope(input PromptInput, attempt int) st
 		fmt.Sprintf("[Repo root: %s]", s.cfg.PhiToolRoot),
 		"[Requirement: treat the original user message as unresolved and execute its requested work now in this turn.]",
 		"[Requirement: if the request involves code/prompt/debugging actions, run the required repo commands first, then send the final Telegram confirmation.]",
+		"[Requirement: do not send an early ack before doing the requested work.]",
+		"[Requirement: if you send any progress update, still send a final completion/failure Telegram message after the last work command.]",
 		"[Requirement: before each Telegram reply, execute `./bin/jarvisctl telegram typing --chat <Chat ID>` and ensure a successful `./bin/jarvisctl telegram send-text --chat <Chat ID> --text ...` for user-visible output.]",
 		"[When running CLI commands, use the repo root above; do not use `cd ~`.]",
 		"[Do not return an empty assistant response.]",
@@ -466,11 +500,13 @@ func (s *Service) logAgentEvent(chatID int64, ev agent.Event) {
 		if se.ToolCallID != "" && fields["tool_call_id"] == nil {
 			fields["tool_call_id"] = se.ToolCallID
 		}
-		if se.Type == stream.EventToolCall && strings.EqualFold(se.ToolName, "bash") {
-			cmd, _ := se.Arguments["command"].(string)
-			if looksLikeTelegramSend(cmd) {
-				s.markPendingSendCall(chatID, se.ToolCallID)
+		if se.Type == stream.EventToolCall {
+			kind := callKindWork
+			if strings.EqualFold(se.ToolName, "bash") {
+				cmd, _ := se.Arguments["command"].(string)
+				kind = classifyBashCallKind(cmd)
 			}
+			s.markPendingToolCall(chatID, se.ToolCallID, kind)
 		}
 	}
 
@@ -485,9 +521,7 @@ func (s *Service) logAgentEvent(chatID int64, ev agent.Event) {
 		if msg.Role == model.RoleToolResult {
 			toolResult := extractText(msg.ContentRaw)
 			fields["tool_result"] = toolResult
-			if ev.ToolCallID != "" && s.consumePendingSendCall(chatID, ev.ToolCallID) && telegramSendSucceeded(toolResult) {
-				s.setSendCalled(chatID, true)
-			}
+			s.recordToolCallResult(chatID, ev.ToolCallID, toolResult)
 		}
 	}
 
@@ -501,57 +535,94 @@ func looksLikeTelegramSend(cmd string) bool {
 		strings.Contains(normalized, "go run ./cmd/jarvisctl -- telegram send")
 }
 
-func (s *Service) setSendCalled(chatID int64, value bool) {
-	s.trackMu.Lock()
-	defer s.trackMu.Unlock()
-	s.sendCalled[chatID] = value
+func looksLikeTelegramTyping(cmd string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(cmd))
+	return strings.Contains(normalized, "jarvisctl telegram typing") ||
+		strings.Contains(normalized, "go run ./cmd/jarvisctl telegram typing") ||
+		strings.Contains(normalized, "go run ./cmd/jarvisctl -- telegram typing")
+}
+
+func classifyBashCallKind(cmd string) callKind {
+	switch {
+	case looksLikeTelegramSend(cmd):
+		return callKindSend
+	case looksLikeTelegramTyping(cmd):
+		return callKindUnknown
+	default:
+		return callKindWork
+	}
 }
 
 func (s *Service) resetAttemptTracking(chatID int64) {
 	s.trackMu.Lock()
 	defer s.trackMu.Unlock()
-	s.sendCalled[chatID] = false
-	delete(s.pendingSendCalls, chatID)
+	s.attempts[chatID] = &attemptTracking{
+		pendingCalls: map[string]callKind{},
+	}
 }
 
-func (s *Service) markPendingSendCall(chatID int64, toolCallID string) {
+func (s *Service) markPendingToolCall(chatID int64, toolCallID string, kind callKind) {
 	if strings.TrimSpace(toolCallID) == "" {
 		return
 	}
 	s.trackMu.Lock()
 	defer s.trackMu.Unlock()
-	pending := s.pendingSendCalls[chatID]
-	if pending == nil {
-		pending = map[string]struct{}{}
-		s.pendingSendCalls[chatID] = pending
+	state := s.ensureAttemptTrackingLocked(chatID)
+	if state.pendingCalls == nil {
+		state.pendingCalls = map[string]callKind{}
 	}
-	pending[toolCallID] = struct{}{}
+	state.pendingCalls[toolCallID] = kind
 }
 
-func (s *Service) consumePendingSendCall(chatID int64, toolCallID string) bool {
+func (s *Service) recordToolCallResult(chatID int64, toolCallID, toolResult string) {
 	if strings.TrimSpace(toolCallID) == "" {
-		return false
+		return
 	}
 	s.trackMu.Lock()
 	defer s.trackMu.Unlock()
-	pending := s.pendingSendCalls[chatID]
-	if pending == nil {
-		return false
+	state := s.ensureAttemptTrackingLocked(chatID)
+	kind, ok := state.pendingCalls[toolCallID]
+	if !ok {
+		return
 	}
-	if _, ok := pending[toolCallID]; !ok {
-		return false
+	delete(state.pendingCalls, toolCallID)
+
+	state.sequence++
+	switch kind {
+	case callKindSend:
+		if telegramSendSucceeded(toolResult) {
+			state.sendCalled = true
+			state.lastSendSeq = state.sequence
+		}
+	case callKindWork:
+		state.lastWorkSeq = state.sequence
 	}
-	delete(pending, toolCallID)
-	if len(pending) == 0 {
-		delete(s.pendingSendCalls, chatID)
-	}
-	return true
 }
 
-func (s *Service) getSendCalled(chatID int64) bool {
+func (s *Service) getAttemptStatus(chatID int64) attemptStatus {
 	s.trackMu.Lock()
 	defer s.trackMu.Unlock()
-	return s.sendCalled[chatID]
+	state := s.ensureAttemptTrackingLocked(chatID)
+	sendAfterWork := false
+	if state.sendCalled {
+		sendAfterWork = state.lastWorkSeq == 0 || state.lastSendSeq > state.lastWorkSeq
+	}
+	return attemptStatus{
+		sendCalled:    state.sendCalled,
+		sendAfterWork: sendAfterWork,
+	}
+}
+
+func (s *Service) ensureAttemptTrackingLocked(chatID int64) *attemptTracking {
+	state := s.attempts[chatID]
+	if state != nil {
+		return state
+	}
+	state = &attemptTracking{
+		pendingCalls: map[string]callKind{},
+	}
+	s.attempts[chatID] = state
+	return state
 }
 
 func extractText(content []any) string {

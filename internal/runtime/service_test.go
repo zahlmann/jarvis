@@ -69,6 +69,56 @@ func TestTelegramSendSucceeded(t *testing.T) {
 	}
 }
 
+func TestAttemptStatusRequiresFinalSendAfterWork(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestService(t)
+	chatID := int64(77)
+	svc.resetAttemptTracking(chatID)
+
+	svc.markPendingToolCall(chatID, "send-1", callKindSend)
+	svc.recordToolCallResult(chatID, "send-1", `{"ok": true, "message_id": 1}`)
+
+	svc.markPendingToolCall(chatID, "work-1", callKindWork)
+	svc.recordToolCallResult(chatID, "work-1", "edited files")
+
+	status := svc.getAttemptStatus(chatID)
+	if !status.sendCalled {
+		t.Fatalf("expected sendCalled=true after successful send")
+	}
+	if status.sendAfterWork {
+		t.Fatalf("expected sendAfterWork=false when work happened after the only send")
+	}
+
+	svc.markPendingToolCall(chatID, "send-2", callKindSend)
+	svc.recordToolCallResult(chatID, "send-2", `{"ok": true, "message_id": 2}`)
+
+	status = svc.getAttemptStatus(chatID)
+	if !status.sendCalled || !status.sendAfterWork {
+		t.Fatalf("expected final send after work to satisfy attempt status, got %+v", status)
+	}
+}
+
+func TestAttemptStatusIgnoresTypingForWorkOrdering(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestService(t)
+	chatID := int64(78)
+	svc.resetAttemptTracking(chatID)
+
+	svc.markPendingToolCall(chatID, "work-1", callKindWork)
+	svc.recordToolCallResult(chatID, "work-1", "ran tests")
+	svc.markPendingToolCall(chatID, "typing-1", callKindUnknown)
+	svc.recordToolCallResult(chatID, "typing-1", `{"ok": true}`)
+	svc.markPendingToolCall(chatID, "send-1", callKindSend)
+	svc.recordToolCallResult(chatID, "send-1", `{"ok": true, "message_id": 3}`)
+
+	status := svc.getAttemptStatus(chatID)
+	if !status.sendCalled || !status.sendAfterWork {
+		t.Fatalf("expected sendAfterWork=true when final send follows work and typing, got %+v", status)
+	}
+}
+
 func TestExpireIdleSessionLockedClosesAndResetsHistory(t *testing.T) {
 	t.Parallel()
 
@@ -211,6 +261,7 @@ func TestBuildNoSendRecoveryEnvelopePreservesExecutionIntent(t *testing.T) {
 		"[Repo root: /repo/root]",
 		"treat the original user message as unresolved",
 		"run the required repo commands first",
+		"do not send an early ack before doing the requested work",
 		"before each Telegram reply, execute `./bin/jarvisctl telegram typing --chat <Chat ID>`",
 	}
 	for _, snippet := range required {
@@ -229,7 +280,8 @@ func newTestService(t *testing.T) *Service {
 		t.Fatalf("create logstore: %v", err)
 	}
 	return &Service{
-		cfg:    config.Config{DataDir: filepath.Join(root, "data")},
-		logger: logger,
+		cfg:      config.Config{DataDir: filepath.Join(root, "data")},
+		logger:   logger,
+		attempts: map[int64]*attemptTracking{},
 	}
 }
