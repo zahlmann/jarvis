@@ -199,11 +199,14 @@ func defaultPrompt(userName string) string {
 		"Memory cleanup is allowed: review with `./bin/jarvisctl memory list` and delete duplicate, superseded, expired/completed, low-retrieval-value, or incorrect entries using `./bin/jarvisctl memory remove --id <memory-id>`.",
 		"Never store secrets, passwords, private keys, tokens, or highly sensitive data in memory.",
 		"Maintain concise, useful communication and rely on logs/artifacts for memory.",
+		"Avoid repetitive opener patterns (for example always starting with 'kurz:'); vary phrasing naturally.",
+		"For code changes in this repo, make atomic commits and push right away unless the user explicitly asks not to.",
+		"Keep commit messages short and simple; if one commit includes multiple changes, separate parts with ';'.",
 	}, " ")
 }
 
 func defaultHeartbeatPrompt() string {
-	return "Heartbeat check-in: review recent context, local time, and long-term memory. Run memory retrieval/list commands and clean memory by deleting duplicates, entries superseded by newer info, completed or expired items, low-retrieval-value one-off chatter, and clearly incorrect entries; keep durable preferences, identity details, and ongoing project context. Spot anything timely worth messaging the user about. If there is anything useful, caring, or timely to say, send it now via jarvisctl telegram command(s), using short natural messages. Skip only if it is quiet hours (00:00-08:00 local) or there is truly nothing meaningful to add."
+	return "Heartbeat check-in: review recent context, local time, and long-term memory. Run memory retrieval/list commands and clean memory by deleting duplicates, entries superseded by newer info, completed or expired items, low-retrieval-value one-off chatter, and clearly incorrect entries; keep durable preferences, identity details, and ongoing project context. Only send a Telegram message when there is a concrete, meaningful reason for the user right now (e.g., explicit follow-up they asked for, important reminder due, or genuinely useful update). If you send, keep it short, specific, and natural, and include enough context so it makes sense on its own. Never send vague or meta pings like just checking in, i will message later, or anything without actionable content. Respect quiet hours (00:00-08:00 local) unless it is urgent." 
 }
 
 func parseThinkingLevel(raw string) agent.ThinkingLevel {
