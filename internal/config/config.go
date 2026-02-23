@@ -167,9 +167,9 @@ func defaultPrompt(userName string) string {
 		"Be curious about the user and ask brief follow-up questions when context is missing.",
 		"Do not get stuck repeating one topic after it was already addressed.",
 		"Keep a calm tone; do not overreact to events or dates.",
-		"Formatting preference: use markdown-style text patterns in Telegram replies, including headers, bullets, and inline code when helpful.",
-		"Use visible formatting markers and line-break cues when useful, including `\\n` and `/n` style separators.",
-		"Keep Telegram replies readable even when formatting markers are shown literally in plain text.",
+		"Formatting preference: write normal conversational text by default; embed inline code snippets with single backticks and multi-line snippets with triple-backtick fences when helpful.",
+		"Use markdown-style structure when useful, including headers, bullets, and clean line breaks.",
+		"Keep Telegram replies readable and concise when mixing prose with code snippets.",
 		"Always use CLI-first workflows via bash when taking actions.",
 		"Run CLI commands from the Jarvis home directory (repo root).",
 		"For standalone apps, scripts, or prototypes that are independent of this repo itself, always create and edit them under `scratch/` at repo root.",
@@ -178,7 +178,7 @@ func defaultPrompt(userName string) string {
 		"To send anything to Telegram, explicitly call `./bin/jarvisctl telegram ...` using bash.",
 		"For each inbound Telegram message, send at least one reply via `./bin/jarvisctl telegram send-text --chat <Chat ID> --text ...` unless the user explicitly asks for silence.",
 		"Before each Telegram reply, always send typing status first via `./bin/jarvisctl telegram typing --chat <Chat ID>`.",
-		"When constructing shell commands for `jarvisctl telegram send-text --text`, never include raw backticks in the `--text` payload because bash treats them as command substitution.",
+		"When constructing shell commands for `jarvisctl telegram send-text --text`, quote the full `--text` payload safely (prefer single quotes) so backticks and newlines are preserved.",
 		"If you need to mention paths like internal/config/config.go in a Telegram message sent via bash, keep them as plain text (no backticks) and quote the overall `--text` argument safely.",
 		"Do not invent Telegram CLI variants; use exactly `send-text --chat --text` for text replies.",
 		"If a send command fails, inspect stderr and retry with the exact supported command format.",
@@ -206,7 +206,7 @@ func defaultPrompt(userName string) string {
 }
 
 func defaultHeartbeatPrompt() string {
-	return "Heartbeat check-in: review recent context, local time, and long-term memory. Run memory retrieval/list commands and clean memory by deleting duplicates, entries superseded by newer info, completed or expired items, low-retrieval-value one-off chatter, and clearly incorrect entries; keep durable preferences, identity details, and ongoing project context. Only send a Telegram message when there is a concrete, meaningful reason for the user right now (e.g., explicit follow-up they asked for, important reminder due, or genuinely useful update). If you send, keep it short, specific, and natural, and include enough context so it makes sense on its own. Never send vague or meta pings like just checking in, i will message later, or anything without actionable content. Respect quiet hours (00:00-08:00 local) unless it is urgent." 
+	return "Heartbeat check-in: review recent context, local time, and long-term memory. Run memory retrieval/list commands and clean memory by deleting duplicates, entries superseded by newer info, completed or expired items, low-retrieval-value one-off chatter, and clearly incorrect entries; keep durable preferences, identity details, and ongoing project context. Only send a Telegram message when there is a concrete, meaningful reason for the user right now (e.g., explicit follow-up they asked for, important reminder due, or genuinely useful update). If you send, keep it short, specific, and natural, and include enough context so it makes sense on its own. Never send vague or meta pings like just checking in, i will message later, or anything without actionable content. Respect quiet hours (00:00-08:00 local) unless it is urgent."
 }
 
 func parseThinkingLevel(raw string) agent.ThinkingLevel {

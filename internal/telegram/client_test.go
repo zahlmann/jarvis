@@ -105,6 +105,87 @@ func TestSendTyping(t *testing.T) {
 	}
 }
 
+func TestSendTextIncludesEntitiesForCode(t *testing.T) {
+	t.Parallel()
+
+	type payloadShape struct {
+		ChatID   int64                   `json:"chat_id"`
+		Text     string                  `json:"text"`
+		Entities []telegramMessageEntity `json:"entities"`
+	}
+
+	var got payloadShape
+	client := NewClient("test-token", "https://api.telegram.org")
+	client.http = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.Method != http.MethodPost {
+				t.Fatalf("unexpected method: %s", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatalf("decode payload: %v", err)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":{"message_id":7}}`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+
+	_, err := client.SendText(12345, "run `go test ./...` now")
+	if err != nil {
+		t.Fatalf("SendText returned error: %v", err)
+	}
+	if got.ChatID != 12345 {
+		t.Fatalf("unexpected chat_id payload: %d", got.ChatID)
+	}
+	if got.Text != "run go test ./... now" {
+		t.Fatalf("unexpected text payload: %q", got.Text)
+	}
+	if len(got.Entities) != 1 {
+		t.Fatalf("expected 1 entity, got %d", len(got.Entities))
+	}
+	if got.Entities[0].Type != "code" {
+		t.Fatalf("unexpected entity type: %q", got.Entities[0].Type)
+	}
+}
+
+func TestSendTextLeavesEntitiesEmptyForPlainText(t *testing.T) {
+	t.Parallel()
+
+	type payloadShape struct {
+		ChatID   int64             `json:"chat_id"`
+		Text     string            `json:"text"`
+		Entities []json.RawMessage `json:"entities"`
+	}
+
+	var got payloadShape
+	client := NewClient("test-token", "https://api.telegram.org")
+	client.http = &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatalf("decode payload: %v", err)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":{"message_id":8}}`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+
+	_, err := client.SendText(12345, "plain hello")
+	if err != nil {
+		t.Fatalf("SendText returned error: %v", err)
+	}
+	if got.Text != "plain hello" {
+		t.Fatalf("unexpected text payload: %q", got.Text)
+	}
+	if got.Entities != nil {
+		t.Fatalf("expected entities field to be omitted, got %#v", got.Entities)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {

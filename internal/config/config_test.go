@@ -100,8 +100,9 @@ func TestDefaultPromptTypingAndFormattingPreferences(t *testing.T) {
 	required := []string{
 		"Before each Telegram reply, always send typing status first",
 		"`./bin/jarvisctl telegram typing --chat <Chat ID>`",
-		"use markdown-style text patterns",
-		"`\\n` and `/n` style separators",
+		"embed inline code snippets with single backticks",
+		"triple-backtick fences",
+		"quote the full `--text` payload safely",
 	}
 	for _, fragment := range required {
 		if !strings.Contains(prompt, fragment) {

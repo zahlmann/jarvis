@@ -55,16 +55,20 @@ type SendResult struct {
 }
 
 func (c *Client) SendText(chatID int64, text string) (SendResult, error) {
-	chunks := splitText(text, maxTelegramTextLength)
+	chunks := buildTelegramTextChunks(text, maxTelegramTextLength)
 	if len(chunks) == 0 {
-		chunks = []string{""}
+		chunks = []telegramTextChunk{{Text: ""}}
 	}
 	var out SendResult
 	for _, chunk := range chunks {
-		res, err := c.sendJSON("sendMessage", map[string]any{
+		payload := map[string]any{
 			"chat_id": chatID,
-			"text":    chunk,
-		})
+			"text":    chunk.Text,
+		}
+		if len(chunk.Entities) > 0 {
+			payload["entities"] = chunk.Entities
+		}
+		res, err := c.sendJSON("sendMessage", payload)
 		if err != nil {
 			return SendResult{}, err
 		}

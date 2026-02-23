@@ -103,6 +103,13 @@ cd /path/to/jarvis
 ./bin/jarvisctl telegram send-text --chat 123456 --text "hello"
 ```
 
+`send-text` supports mixed prose plus code formatting in one Telegram message: inline backticks become inline code, and triple-backtick fenced snippets become Telegram code blocks.
+For shell safety, prefer single-quoting `--text` when sending backticks, e.g.:
+
+```bash
+./bin/jarvisctl telegram send-text --chat 123456 --text $'run `go test ./...` and use:\n```go\nfmt.Println("ok")\n```'
+```
+
 Optional typing indicator:
 
 ```bash
