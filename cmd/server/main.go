@@ -190,6 +190,16 @@ func (a *app) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if a.cfg.TelegramAllowChatID != 0 && normalized.ChatID != a.cfg.TelegramAllowChatID {
+		_ = a.logger.Write("telegram", "allowlist_blocked", map[string]any{
+			"chat_id":         normalized.ChatID,
+			"allowed_chat_id": a.cfg.TelegramAllowChatID,
+			"update_id":       normalized.UpdateID,
+		})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ignored": true, "reason": "chat_not_allowed"})
+		return
+	}
+
 	dedupID := fmt.Sprintf("update:%d", normalized.UpdateID)
 	if a.dedup.Seen(dedupID) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "duplicate": true})
