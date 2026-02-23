@@ -24,7 +24,71 @@ import (
 	"github.com/zahlmann/phi/coding/tools"
 )
 
-var okTruePattern = regexp.MustCompile(`"ok"\s*:\s*true`)
+var (
+	okTruePattern      = regexp.MustCompile(`"ok"\s*:\s*true`)
+	shellSplitPattern  = regexp.MustCompile(`\s*(?:&&|\|\||;|\|)\s*`)
+	actionPromptHintRE = regexp.MustCompile(`\b(can you|could you|please|kannst du|bitte)\b`)
+)
+
+var repoWorkHintKeywords = []string{
+	"code",
+	"repo",
+	"repository",
+	"commit",
+	"push",
+	"pull request",
+	"pr ",
+	"system prompt",
+	"prompt",
+	"log",
+	"logs",
+	"history",
+	"debug",
+	"bug",
+	"issue",
+	"fix",
+	"implement",
+	"change",
+	"edit",
+	"refactor",
+	"investigate",
+	"allowlist",
+	"chat id",
+	"agent loop",
+	"early stopping",
+	"phi",
+	"fehler",
+	"problem",
+	"aendere",
+	"bearbeite",
+	"mach",
+	"schau",
+	"pruef",
+	"untersuch",
+	"finde",
+}
+
+var placeholderReplyExact = map[string]struct{}{
+	"on it":      {},
+	"done":       {},
+	"ok":         {},
+	"okay":       {},
+	"alles klar": {},
+	"verstanden": {},
+	"mach ich":   {},
+	"\U0001F44D": {},
+}
+
+var placeholderReplyContains = []string{
+	"ich fix das jetzt",
+	"ich mache es jetzt",
+	"i'll do it now",
+	"i will do it now",
+	"hab's ihm genau so geschickt",
+	"habs ihm genau so geschickt",
+	"hab ich ihm genau so geschickt",
+	"kurz: noch nicht",
+}
 
 const (
 	sessionIdleTimeout   = 30 * time.Minute
@@ -55,6 +119,8 @@ type Service struct {
 	trackMu          sync.Mutex
 	sendCalled       map[int64]bool
 	pendingSendCalls map[int64]map[string]struct{}
+	workCalled       map[int64]bool
+	lastAssistantMsg map[int64]string
 
 	recent *store.RecentStore
 }
@@ -84,6 +150,8 @@ func New(cfg config.Config, logger *logstore.Store) *Service {
 		sessions:         map[int64]*chatSession{},
 		sendCalled:       map[int64]bool{},
 		pendingSendCalls: map[int64]map[string]struct{}{},
+		workCalled:       map[int64]bool{},
+		lastAssistantMsg: map[int64]string{},
 		recent:           recentStore,
 	}
 }
@@ -169,27 +237,72 @@ func (s *Service) runPrompt(cs *chatSession, input PromptInput) error {
 	})
 
 	requireTelegramSend := strings.EqualFold(strings.TrimSpace(input.Source), "telegram")
+	repoWorkRequested := requireTelegramSend && messageLikelyRequiresRepoWork(input.Message)
 	maxAttempts := 1
 	if requireTelegramSend {
 		maxAttempts = 2
+		if repoWorkRequested {
+			maxAttempts = 3
+		}
 	}
 
+	retryReason := ""
+	workObserved := false
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		envelope := s.buildPromptEnvelope(input, isNewSession && attempt == 1)
 		if attempt > 1 {
-			envelope = s.buildNoSendRecoveryEnvelope(input, attempt)
-			_ = s.logger.Write("runtime", "retry_prompt_after_no_send", map[string]any{
-				"chat_id": cs.chatID,
-				"source":  input.Source,
-				"attempt": attempt,
-			})
+			switch retryReason {
+			case "no_action":
+				envelope = s.buildNoActionRecoveryEnvelope(input, attempt)
+				_ = s.logger.Write("runtime", "retry_prompt_after_incomplete_action", map[string]any{
+					"chat_id": cs.chatID,
+					"source":  input.Source,
+					"attempt": attempt,
+				})
+			default:
+				envelope = s.buildNoSendRecoveryEnvelope(input, attempt)
+				_ = s.logger.Write("runtime", "retry_prompt_after_no_send", map[string]any{
+					"chat_id": cs.chatID,
+					"source":  input.Source,
+					"attempt": attempt,
+				})
+			}
 		}
 
-		s.resetSendTracking(cs.chatID)
+		s.resetAttemptTracking(cs.chatID)
 		if err := agentSession.Prompt(envelope, sdk.PromptOptions{Images: input.Images}); err != nil {
 			return err
 		}
-		if !requireTelegramSend || s.getSendCalled(cs.chatID) {
+
+		attemptWork := s.getWorkCalled(cs.chatID)
+		if attemptWork {
+			workObserved = true
+		}
+		sendCalled := s.getSendCalled(cs.chatID)
+		assistantText := s.getLastAssistantMsg(cs.chatID)
+
+		if !requireTelegramSend {
+			_ = s.logger.Write("runtime", "prompt_end", map[string]any{
+				"chat_id":  cs.chatID,
+				"source":   input.Source,
+				"attempts": attempt,
+			})
+			return nil
+		}
+
+		if sendCalled && repoWorkRequested && !workObserved && isLikelyPlaceholderReply(assistantText) {
+			_ = s.logger.Write("runtime", "placeholder_reply_without_action", map[string]any{
+				"chat_id":         cs.chatID,
+				"source":          input.Source,
+				"attempt":         attempt,
+				"assistant_text":  truncatePromptText(assistantText, 220),
+				"repo_work_query": true,
+			})
+			retryReason = "no_action"
+			continue
+		}
+
+		if sendCalled {
 			_ = s.logger.Write("runtime", "prompt_end", map[string]any{
 				"chat_id":  cs.chatID,
 				"source":   input.Source,
@@ -203,8 +316,12 @@ func (s *Service) runPrompt(cs *chatSession, input PromptInput) error {
 			"source":  input.Source,
 			"attempt": attempt,
 		})
+		retryReason = "no_send"
 	}
 
+	if retryReason == "no_action" {
+		return fmt.Errorf("reply acknowledged action but no repo work command executed after %d attempt(s)", maxAttempts)
+	}
 	return fmt.Errorf("no successful telegram send command after %d attempt(s)", maxAttempts)
 }
 
@@ -317,6 +434,7 @@ func (s *Service) buildPromptEnvelope(input PromptInput, includeRecentRecap bool
 		fmt.Sprintf("[User: %s]", strings.TrimSpace(input.UserName)),
 		fmt.Sprintf("[Source: %s]", input.Source),
 		fmt.Sprintf("[Local time: %s]", now.Format("2006-01-02 15:04 MST")),
+		fmt.Sprintf("[Repo root: %s]", s.cfg.PhiToolRoot),
 		fmt.Sprintf("[Voice transcription enabled: %t]", s.cfg.TranscriptionEnabled),
 		fmt.Sprintf("[Voice reply enabled: %t]", s.cfg.VoiceReplyEnabled),
 	}
@@ -421,9 +539,35 @@ func (s *Service) buildNoSendRecoveryEnvelope(input PromptInput, attempt int) st
 		fmt.Sprintf("[Retry attempt: %d]", attempt),
 		fmt.Sprintf("[Chat ID: %d]", input.ChatID),
 		fmt.Sprintf("[Local time: %s]", now.Format("2006-01-02 15:04 MST")),
+		fmt.Sprintf("[Repo root: %s]", s.cfg.PhiToolRoot),
 		"[Requirement: execute `./bin/jarvisctl telegram typing --chat <Chat ID>` first, then at least one successful `./bin/jarvisctl telegram send-text --chat <Chat ID> --text ...` command via bash now.]",
+		"[When running CLI commands, use the repo root above; do not use `cd ~`.]",
 		"[Do not return an empty assistant response.]",
 		"[If the user just confirmed a prior yes/no question, continue with the requested action instead of asking the same confirmation again.]",
+		"",
+		"Original message: " + input.Message,
+	}
+	return strings.Join(parts, "\n")
+}
+
+func (s *Service) buildNoActionRecoveryEnvelope(input PromptInput, attempt int) string {
+	loc := time.UTC
+	if tz, err := time.LoadLocation(s.cfg.Timezone); err == nil {
+		loc = tz
+	}
+	now := time.Now().In(loc)
+
+	parts := []string{
+		"[System follow-up: your previous reply acknowledged the task, but no repo/code work command was executed.]",
+		fmt.Sprintf("[Retry attempt: %d]", attempt),
+		fmt.Sprintf("[Chat ID: %d]", input.ChatID),
+		fmt.Sprintf("[Local time: %s]", now.Format("2006-01-02 15:04 MST")),
+		fmt.Sprintf("[Repo root: %s]", s.cfg.PhiToolRoot),
+		"[Requirement: execute the requested work now in this same turn (inspect/edit/test/git as needed) before the final Telegram confirmation.]",
+		"[Requirement: run at least one non-telegram bash command before the final `telegram send-text` command.]",
+		"[Do not send placeholder updates like `on it`, `done`, or thumbs-up only.]",
+		"[If blocked, send a concrete blocker with command output.]",
+		"[When running CLI commands, use the repo root above; do not use `cd ~`.]",
 		"",
 		"Original message: " + input.Message,
 	}
@@ -467,6 +611,9 @@ func (s *Service) logAgentEvent(chatID int64, ev agent.Event) {
 			if looksLikeTelegramSend(cmd) {
 				s.markPendingSendCall(chatID, se.ToolCallID)
 			}
+			if bashCommandHasNonTelegramWork(cmd) {
+				s.setWorkCalled(chatID, true)
+			}
 		}
 	}
 
@@ -476,6 +623,7 @@ func (s *Service) logAgentEvent(chatID int64, ev agent.Event) {
 		if strings.TrimSpace(text) != "" {
 			fields["assistant_text"] = text
 		}
+		s.setLastAssistantMsg(chatID, text)
 		fields["stop_reason"] = string(msg.StopReason)
 	case model.Message:
 		if msg.Role == model.RoleToolResult {
@@ -497,16 +645,120 @@ func looksLikeTelegramSend(cmd string) bool {
 		strings.Contains(normalized, "go run ./cmd/jarvisctl -- telegram send")
 }
 
+func looksLikeTelegramStatus(cmd string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(cmd))
+	return strings.Contains(normalized, "jarvisctl telegram typing") ||
+		strings.Contains(normalized, "go run ./cmd/jarvisctl telegram typing") ||
+		strings.Contains(normalized, "go run ./cmd/jarvisctl -- telegram typing")
+}
+
+func bashCommandHasNonTelegramWork(cmd string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(cmd))
+	if normalized == "" {
+		return false
+	}
+
+	segments := shellSplitPattern.Split(normalized, -1)
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			continue
+		}
+		if isShellPreambleSegment(segment) {
+			continue
+		}
+		if looksLikeTelegramSend(segment) || looksLikeTelegramStatus(segment) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func isShellPreambleSegment(segment string) bool {
+	prefixes := []string{
+		"cd ",
+		"pwd",
+		"echo ",
+		"export ",
+		"set ",
+		"true",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(segment, prefix) || segment == strings.TrimSpace(prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func messageLikelyRequiresRepoWork(raw string) bool {
+	normalized := normalizeForHeuristic(raw)
+	if normalized == "" {
+		return false
+	}
+	if actionPromptHintRE.MatchString(normalized) {
+		for _, hint := range repoWorkHintKeywords {
+			if strings.Contains(normalized, hint) {
+				return true
+			}
+		}
+	}
+	for _, hint := range repoWorkHintKeywords {
+		if strings.Contains(normalized, hint) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLikelyPlaceholderReply(raw string) bool {
+	normalized := normalizeForHeuristic(raw)
+	if normalized == "" {
+		return false
+	}
+	if _, ok := placeholderReplyExact[normalized]; ok {
+		return true
+	}
+	for _, snippet := range placeholderReplyContains {
+		if strings.Contains(normalized, snippet) {
+			return true
+		}
+	}
+	if len([]rune(normalized)) <= 20 && (strings.Contains(normalized, "on it") || strings.Contains(normalized, "done")) {
+		return true
+	}
+	return false
+}
+
+func normalizeForHeuristic(raw string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(raw)), " "))
+}
+
 func (s *Service) setSendCalled(chatID int64, value bool) {
 	s.trackMu.Lock()
 	defer s.trackMu.Unlock()
 	s.sendCalled[chatID] = value
 }
 
-func (s *Service) resetSendTracking(chatID int64) {
+func (s *Service) setWorkCalled(chatID int64, value bool) {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	s.workCalled[chatID] = value
+}
+
+func (s *Service) setLastAssistantMsg(chatID int64, text string) {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	s.lastAssistantMsg[chatID] = strings.TrimSpace(text)
+}
+
+func (s *Service) resetAttemptTracking(chatID int64) {
 	s.trackMu.Lock()
 	defer s.trackMu.Unlock()
 	s.sendCalled[chatID] = false
+	s.workCalled[chatID] = false
+	s.lastAssistantMsg[chatID] = ""
 	delete(s.pendingSendCalls, chatID)
 }
 
@@ -548,6 +800,18 @@ func (s *Service) getSendCalled(chatID int64) bool {
 	s.trackMu.Lock()
 	defer s.trackMu.Unlock()
 	return s.sendCalled[chatID]
+}
+
+func (s *Service) getWorkCalled(chatID int64) bool {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	return s.workCalled[chatID]
+}
+
+func (s *Service) getLastAssistantMsg(chatID int64) string {
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	return s.lastAssistantMsg[chatID]
 }
 
 func extractText(content []any) string {

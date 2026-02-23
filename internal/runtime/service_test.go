@@ -194,6 +194,117 @@ func TestBuildPromptEnvelopeRecentRecapOnlyWhenRequested(t *testing.T) {
 	}
 }
 
+func TestMessageLikelyRequiresRepoWork(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		input  string
+		expect bool
+	}{
+		{
+			name:   "english repo work request",
+			input:  "can you check the logs, find the bug, and commit the fix?",
+			expect: true,
+		},
+		{
+			name:   "german prompt and push request",
+			input:  "kannst du den system prompt aendern und direkt pushen?",
+			expect: true,
+		},
+		{
+			name:   "informational question only",
+			input:  "what does the bot token do?",
+			expect: false,
+		},
+		{
+			name:   "smalltalk",
+			input:  "hi there",
+			expect: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := messageLikelyRequiresRepoWork(tc.input)
+			if got != tc.expect {
+				t.Fatalf("messageLikelyRequiresRepoWork(%q) = %v, want %v", tc.input, got, tc.expect)
+			}
+		})
+	}
+}
+
+func TestIsLikelyPlaceholderReply(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		input  string
+		expect bool
+	}{
+		{name: "on it", input: "on it", expect: true},
+		{name: "thumbs up", input: "\U0001F44D", expect: true},
+		{name: "defer promise", input: "ich fix das jetzt wirklich direkt", expect: true},
+		{name: "sent exactly like that", input: "done - hab's ihm genau so geschickt", expect: true},
+		{name: "real completion summary", input: "done. updated allowlist in cmd/server/main.go and pushed commit abc1234", expect: false},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := isLikelyPlaceholderReply(tc.input)
+			if got != tc.expect {
+				t.Fatalf("isLikelyPlaceholderReply(%q) = %v, want %v", tc.input, got, tc.expect)
+			}
+		})
+	}
+}
+
+func TestBashCommandHasNonTelegramWork(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		cmd    string
+		expect bool
+	}{
+		{
+			name:   "telegram typing and send only",
+			cmd:    "./bin/jarvisctl telegram typing --chat 1 && ./bin/jarvisctl telegram send-text --chat 1 --text 'ok'",
+			expect: false,
+		},
+		{
+			name:   "git status plus telegram send",
+			cmd:    "git status && ./bin/jarvisctl telegram send-text --chat 1 --text 'done'",
+			expect: true,
+		},
+		{
+			name:   "memory command plus typing",
+			cmd:    "cd /repo && ./bin/jarvisctl memory retrieve --query 'hello' && ./bin/jarvisctl telegram typing --chat 1",
+			expect: true,
+		},
+		{
+			name:   "preamble only plus typing",
+			cmd:    "cd /repo && pwd && ./bin/jarvisctl telegram typing --chat 1",
+			expect: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := bashCommandHasNonTelegramWork(tc.cmd)
+			if got != tc.expect {
+				t.Fatalf("bashCommandHasNonTelegramWork(%q) = %v, want %v", tc.cmd, got, tc.expect)
+			}
+		})
+	}
+}
+
 func newTestService(t *testing.T) *Service {
 	t.Helper()
 

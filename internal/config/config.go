@@ -71,7 +71,7 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 
 	toolRoot := strings.TrimSpace(os.Getenv("JARVIS_PHI_TOOL_ROOT"))
 	if toolRoot == "" {
-		toolRoot = cwd
+		toolRoot = defaultToolRoot(cwd, os.Executable)
 	}
 
 	authMode := provider.AuthMode(strings.TrimSpace(os.Getenv("PHI_AUTH_MODE")))
@@ -172,6 +172,7 @@ func defaultPrompt(userName string) string {
 		"Keep Telegram replies readable and concise when mixing prose with code snippets.",
 		"Always use CLI-first workflows via bash when taking actions.",
 		"Run CLI commands from the Jarvis home directory (repo root).",
+		"Do not use `cd ~` for repo tasks; use the repo-root path provided in the runtime envelope.",
 		"For standalone apps, scripts, or prototypes that are independent of this repo itself, always create and edit them under `scratch/` at repo root.",
 		"When the user references prior independent work you did together (for example 'the thing we built' or 'that app'), check `scratch/` first before searching elsewhere.",
 		"Keep each independent project in its own subdirectory under `scratch/`.",
@@ -202,12 +203,49 @@ func defaultPrompt(userName string) string {
 		"Maintain concise, useful communication and rely on logs/artifacts for memory.",
 		"Avoid repetitive opener patterns (for example always starting with 'kurz:'); vary phrasing naturally.",
 		"For code changes in this repo, make atomic commits and push right away unless the user explicitly asks not to.",
+		"For action requests (code changes, prompt edits, debugging), do the work first; avoid placeholder-only updates like on it/done before execution.",
+		"After completing action requests, send one concise completion message with concrete outcomes (for example files changed and commit hash).",
 		"Keep commit messages short and simple; if one commit includes multiple changes, separate parts with ';'.",
 	}, " ")
 }
 
 func defaultHeartbeatPrompt() string {
 	return "Heartbeat check-in: review recent context, local time, and long-term memory. Run memory retrieval/list commands and clean memory by deleting duplicates, entries superseded by newer info, completed or expired items, low-retrieval-value one-off chatter, and clearly incorrect entries; keep durable preferences, identity details, and ongoing project context. Only send a Telegram message when there is a concrete, meaningful reason for the user right now (e.g., explicit follow-up they asked for, important reminder due, or genuinely useful update). If you send, keep it short, specific, and natural, and include enough context so it makes sense on its own. Never send vague or meta pings like just checking in, i will message later, or anything without actionable content. Respect quiet hours (00:00-08:00 local) unless it is urgent."
+}
+
+func defaultToolRoot(cwd string, executablePathFn func() (string, error)) string {
+	cwd = strings.TrimSpace(cwd)
+	if looksLikeRepoRoot(cwd) {
+		return cwd
+	}
+	if executablePathFn != nil {
+		if exe, err := executablePathFn(); err == nil {
+			candidate := filepath.Clean(filepath.Join(filepath.Dir(exe), ".."))
+			if looksLikeRepoRoot(candidate) {
+				return candidate
+			}
+		}
+	}
+	return cwd
+}
+
+func looksLikeRepoRoot(root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+
+	required := []string{
+		filepath.Join(root, "go.mod"),
+		filepath.Join(root, "cmd", "server", "main.go"),
+		filepath.Join(root, "cmd", "jarvisctl", "main.go"),
+	}
+	for _, path := range required {
+		if _, err := os.Stat(path); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func parseThinkingLevel(raw string) agent.ThinkingLevel {
