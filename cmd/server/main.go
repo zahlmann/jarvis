@@ -43,6 +43,8 @@ func main() {
 		log.Fatalf("config error: %v", err)
 	}
 	ensureBinPath()
+	ensureRuntimePath()
+	ensurePythonShim()
 	ensureJarvisctlAvailable()
 
 	logger, err := logstore.New(filepath.Join(cfg.DataDir, "logs"))
@@ -329,6 +331,100 @@ func ensureBinPath() {
 		return
 	}
 	_ = os.Setenv("PATH", binDir+string(os.PathListSeparator)+current)
+}
+
+func ensureRuntimePath() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	updated := buildRuntimePath(os.Getenv("PATH"), home)
+	if strings.TrimSpace(updated) == "" {
+		return
+	}
+	_ = os.Setenv("PATH", updated)
+}
+
+func buildRuntimePath(current, home string) string {
+	seen := map[string]struct{}{}
+	ordered := make([]string, 0, 16)
+	appendIfDir := func(raw string) {
+		cleaned := filepath.Clean(strings.TrimSpace(raw))
+		if cleaned == "" || cleaned == "." {
+			return
+		}
+		if _, ok := seen[cleaned]; ok {
+			return
+		}
+		info, err := os.Stat(cleaned)
+		if err != nil || !info.IsDir() {
+			return
+		}
+		seen[cleaned] = struct{}{}
+		ordered = append(ordered, cleaned)
+	}
+
+	for _, entry := range filepath.SplitList(current) {
+		appendIfDir(entry)
+	}
+
+	if strings.TrimSpace(home) != "" {
+		appendIfDir(filepath.Join(home, ".local", "bin"))
+		appendIfDir(filepath.Join(home, ".cargo", "bin"))
+	}
+	for _, candidate := range []string{
+		"/usr/local/sbin",
+		"/usr/local/bin",
+		"/usr/sbin",
+		"/usr/bin",
+		"/sbin",
+		"/bin",
+		"/snap/bin",
+	} {
+		appendIfDir(candidate)
+	}
+	return strings.Join(ordered, string(os.PathListSeparator))
+}
+
+func ensurePythonShim() {
+	if _, err := exec.LookPath("python"); err == nil {
+		return
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	binDir := filepath.Join(cwd, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		log.Printf("warning: could not create bin dir for python shim: %v", err)
+		return
+	}
+
+	shimPath := filepath.Join(binDir, "python")
+	content := pythonShimContent()
+	if err := os.WriteFile(shimPath, []byte(content), 0o755); err != nil {
+		log.Printf("warning: could not write python shim: %v", err)
+	}
+}
+
+func pythonShimContent() string {
+	return strings.Join([]string{
+		"#!/usr/bin/env bash",
+		"set -euo pipefail",
+		"",
+		"if command -v uv >/dev/null 2>&1; then",
+		"  exec uv run python \"$@\"",
+		"fi",
+		"",
+		"if command -v python3 >/dev/null 2>&1; then",
+		"  exec python3 \"$@\"",
+		"fi",
+		"",
+		"echo \"python is unavailable: neither uv nor python3 were found in PATH\" >&2",
+		"exit 127",
+		"",
+	}, "\n")
 }
 
 func runMemoryEmbeddingLoop(ctx context.Context, st *memory.Store, embedder memory.Embedder, logger *logstore.Store) {

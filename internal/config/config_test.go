@@ -131,6 +131,9 @@ func TestDefaultPromptActionRequestCompletionGuidance(t *testing.T) {
 		"Do not use `cd ~` for repo tasks",
 		"avoid placeholder-only updates like on it/done before execution",
 		"send one concise completion message with concrete outcomes",
+		"full permission to read, edit, create, delete, commit, and push",
+		"always use uv-based workflows",
+		"Do not use plain `python` or `pip` commands unless uv is unavailable",
 	}
 	for _, fragment := range required {
 		if !strings.Contains(prompt, fragment) {
