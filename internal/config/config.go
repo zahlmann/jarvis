@@ -13,7 +13,6 @@ import (
 
 type Config struct {
 	Env                  string
-	TelegramAllowChatID  int64
 	ListenAddr           string
 	DataDir              string
 	TelegramBotToken     string
@@ -90,23 +89,12 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 	}
 
 	defaultChatID := int64(0)
-	allowChatID := int64(0)
 	if raw := strings.TrimSpace(os.Getenv("JARVIS_PHI_DEFAULT_CHAT_ID")); raw != "" {
 		parsed, parseErr := strconv.ParseInt(raw, 10, 64)
 		if parseErr != nil {
 			return Config{}, fmt.Errorf("invalid JARVIS_PHI_DEFAULT_CHAT_ID: %w", parseErr)
 		}
 		defaultChatID = parsed
-	}
-
-	if raw := strings.TrimSpace(os.Getenv("JARVIS_PHI_TELEGRAM_ALLOW_CHAT_ID")); raw != "" {
-		parsed, parseErr := strconv.ParseInt(raw, 10, 64)
-		if parseErr != nil {
-			return Config{}, fmt.Errorf("invalid JARVIS_PHI_TELEGRAM_ALLOW_CHAT_ID: %w", parseErr)
-		}
-		allowChatID = parsed
-	} else if defaultChatID != 0 {
-		allowChatID = defaultChatID
 	}
 
 	heartbeatEnabled := parseBoolDefault("JARVIS_PHI_HEARTBEAT_ENABLED", true)
@@ -138,7 +126,6 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 		PhiAccessToken:       strings.TrimSpace(os.Getenv("PHI_CHATGPT_ACCESS_TOKEN")),
 		PhiAccountID:         strings.TrimSpace(os.Getenv("PHI_CHATGPT_ACCOUNT_ID")),
 		DefaultChatID:        defaultChatID,
-		TelegramAllowChatID:  allowChatID,
 		OpenAIAPIKey:         openAIKey,
 		MemoryEmbeddingModel: defaultString("JARVIS_PHI_MEMORY_EMBEDDING_MODEL", "text-embedding-3-small"),
 		TranscriptionEnabled: parseBoolDefault("JARVIS_PHI_TRANSCRIPTION_ENABLED", true),

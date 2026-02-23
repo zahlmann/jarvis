@@ -190,10 +190,10 @@ func (a *app) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if a.cfg.TelegramAllowChatID != 0 && normalized.ChatID != a.cfg.TelegramAllowChatID {
+	if a.cfg.DefaultChatID != 0 && normalized.ChatID != a.cfg.DefaultChatID {
 		_ = a.logger.Write("telegram", "allowlist_blocked", map[string]any{
 			"chat_id":         normalized.ChatID,
-			"allowed_chat_id": a.cfg.TelegramAllowChatID,
+			"allowed_chat_id": a.cfg.DefaultChatID,
 			"update_id":       normalized.UpdateID,
 		})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ignored": true, "reason": "chat_not_allowed"})
