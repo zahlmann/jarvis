@@ -76,6 +76,7 @@ func main() {
 
 	tgClient := telegram.NewClient(cfg.TelegramBotToken, cfg.TelegramAPIBase)
 	rt := runtime.New(cfg, logger)
+	defer rt.Close()
 
 	application := &app{
 		cfg:      cfg,

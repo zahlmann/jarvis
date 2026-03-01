@@ -1,8 +1,9 @@
 module github.com/zahlmann/jarvis-phi
 
-go 1.22
+go 1.26.0
 
 require github.com/zahlmann/phi v0.0.0
+
 require github.com/parquet-go/parquet-go v0.24.0
 
 require (

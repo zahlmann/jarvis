@@ -1,16 +1,14 @@
 package runtime
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/zahlmann/jarvis-phi/internal/config"
 	"github.com/zahlmann/jarvis-phi/internal/logstore"
 	"github.com/zahlmann/jarvis-phi/internal/store"
-	"github.com/zahlmann/phi/coding/sdk"
+	"github.com/zahlmann/phi/ai/model"
 )
 
 func TestTelegramSendSucceeded(t *testing.T) {
@@ -22,32 +20,35 @@ func TestTelegramSendSucceeded(t *testing.T) {
 		expect bool
 	}{
 		{
-			name:   "single json ok true",
+			name:   "single json with ok true and message id",
 			input:  `{"message_id": 1, "ok": true}`,
 			expect: true,
 		},
 		{
-			name: "multiple json documents second has ok true",
+			name: "nested message id under result",
 			input: `{
-  "limit": 8,
-  "query": "hello",
-  "results": []
-}
-{
-  "message_id": 121,
-  "ok": true
+  "ok": true,
+  "result": {
+    "message_id": 121,
+    "chat": {"id": 42}
+  }
 }`,
 			expect: true,
 		},
 		{
-			name: "mixed output with embedded ok true json",
+			name: "mixed output with embedded send response",
 			input: `debug: command started
-{"ok": true, "message_id": 122}`,
+{"ok": true, "result": {"message_id": 122}}`,
 			expect: true,
 		},
 		{
+			name:   "typing action has ok true but no message id",
+			input:  `{"ok": true, "result": true}`,
+			expect: false,
+		},
+		{
 			name:   "single json ok false",
-			input:  `{"ok": false}`,
+			input:  `{"ok": false, "result": {"message_id": 1}}`,
 			expect: false,
 		},
 		{
@@ -73,16 +74,16 @@ func TestAttemptStatusRequiresFinalSendAfterWork(t *testing.T) {
 	t.Parallel()
 
 	svc := newTestService(t)
-	chatID := int64(77)
-	svc.resetAttemptTracking(chatID)
+	sessionID := "session-77"
+	svc.resetAttemptTracking(sessionID)
 
-	svc.markPendingToolCall(chatID, "send-1", callKindSend)
-	svc.recordToolCallResult(chatID, "send-1", `{"ok": true, "message_id": 1}`)
+	svc.markPendingToolCall(sessionID, "send-1", callKindUnknown)
+	svc.recordToolCallResult(sessionID, "send-1", "bash", textToolResult(`{"ok": true, "message_id": 1}`), false)
 
-	svc.markPendingToolCall(chatID, "work-1", callKindWork)
-	svc.recordToolCallResult(chatID, "work-1", "edited files")
+	svc.markPendingToolCall(sessionID, "work-1", callKindUnknown)
+	svc.recordToolCallResult(sessionID, "work-1", "bash", textToolResult("edited files"), false)
 
-	status := svc.getAttemptStatus(chatID)
+	status := svc.getAttemptStatus(sessionID)
 	if !status.sendCalled {
 		t.Fatalf("expected sendCalled=true after successful send")
 	}
@@ -90,10 +91,10 @@ func TestAttemptStatusRequiresFinalSendAfterWork(t *testing.T) {
 		t.Fatalf("expected sendAfterWork=false when work happened after the only send")
 	}
 
-	svc.markPendingToolCall(chatID, "send-2", callKindSend)
-	svc.recordToolCallResult(chatID, "send-2", `{"ok": true, "message_id": 2}`)
+	svc.markPendingToolCall(sessionID, "send-2", callKindUnknown)
+	svc.recordToolCallResult(sessionID, "send-2", "bash", textToolResult(`{"ok": true, "message_id": 2}`), false)
 
-	status = svc.getAttemptStatus(chatID)
+	status = svc.getAttemptStatus(sessionID)
 	if !status.sendCalled || !status.sendAfterWork {
 		t.Fatalf("expected final send after work to satisfy attempt status, got %+v", status)
 	}
@@ -103,99 +104,19 @@ func TestAttemptStatusIgnoresTypingForWorkOrdering(t *testing.T) {
 	t.Parallel()
 
 	svc := newTestService(t)
-	chatID := int64(78)
-	svc.resetAttemptTracking(chatID)
+	sessionID := "session-78"
+	svc.resetAttemptTracking(sessionID)
 
-	svc.markPendingToolCall(chatID, "work-1", callKindWork)
-	svc.recordToolCallResult(chatID, "work-1", "ran tests")
-	svc.markPendingToolCall(chatID, "typing-1", callKindUnknown)
-	svc.recordToolCallResult(chatID, "typing-1", `{"ok": true}`)
-	svc.markPendingToolCall(chatID, "send-1", callKindSend)
-	svc.recordToolCallResult(chatID, "send-1", `{"ok": true, "message_id": 3}`)
+	svc.markPendingToolCall(sessionID, "work-1", callKindUnknown)
+	svc.recordToolCallResult(sessionID, "work-1", "bash", textToolResult("ran tests"), false)
+	svc.markPendingToolCall(sessionID, "typing-1", callKindUnknown)
+	svc.recordToolCallResult(sessionID, "typing-1", "bash", textToolResult(`{"ok": true, "result": true}`), false)
+	svc.markPendingToolCall(sessionID, "send-1", callKindUnknown)
+	svc.recordToolCallResult(sessionID, "send-1", "bash", textToolResult(`{"ok": true, "message_id": 3}`), false)
 
-	status := svc.getAttemptStatus(chatID)
+	status := svc.getAttemptStatus(sessionID)
 	if !status.sendCalled || !status.sendAfterWork {
-		t.Fatalf("expected sendAfterWork=true when final send follows work and typing, got %+v", status)
-	}
-}
-
-func TestExpireIdleSessionLockedClosesAndResetsHistory(t *testing.T) {
-	t.Parallel()
-
-	svc := newTestService(t)
-	now := time.Now().UTC()
-	chatID := int64(42)
-	path := svc.sessionPath(chatID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir session dir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte("{\"type\":\"message\"}\n"), 0o644); err != nil {
-		t.Fatalf("write session file: %v", err)
-	}
-
-	unsubCalled := false
-	cs := &chatSession{
-		chatID:          chatID,
-		session:         &sdk.AgentSession{},
-		unsubscribe:     func() { unsubCalled = true },
-		lastInteraction: now.Add(-(sessionIdleTimeout + time.Minute)),
-	}
-
-	cs.mu.Lock()
-	svc.expireIdleSessionLocked(cs, now)
-	cs.mu.Unlock()
-
-	if cs.session != nil {
-		t.Fatalf("expected session to be cleared")
-	}
-	if cs.unsubscribe != nil {
-		t.Fatalf("expected unsubscribe callback to be cleared")
-	}
-	if !unsubCalled {
-		t.Fatalf("expected unsubscribe callback to be invoked")
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("expected session file to be removed, stat err=%v", err)
-	}
-}
-
-func TestExpireIdleSessionLockedNoopBeforeTimeout(t *testing.T) {
-	t.Parallel()
-
-	svc := newTestService(t)
-	now := time.Now().UTC()
-	chatID := int64(43)
-	path := svc.sessionPath(chatID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir session dir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte("{\"type\":\"message\"}\n"), 0o644); err != nil {
-		t.Fatalf("write session file: %v", err)
-	}
-
-	unsubCalled := false
-	cs := &chatSession{
-		chatID:          chatID,
-		session:         &sdk.AgentSession{},
-		unsubscribe:     func() { unsubCalled = true },
-		lastInteraction: now.Add(-(sessionIdleTimeout - time.Minute)),
-	}
-
-	cs.mu.Lock()
-	svc.expireIdleSessionLocked(cs, now)
-	cs.mu.Unlock()
-
-	if cs.session == nil {
-		t.Fatalf("expected session to remain active before timeout")
-	}
-	if cs.unsubscribe == nil {
-		t.Fatalf("expected unsubscribe callback to remain set before timeout")
-	}
-	if unsubCalled {
-		t.Fatalf("did not expect unsubscribe callback to be invoked")
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("expected session file to remain, stat err=%v", err)
+		t.Fatalf("expected sendAfterWork=true when final send follows work, got %+v", status)
 	}
 }
 
@@ -280,8 +201,22 @@ func newTestService(t *testing.T) *Service {
 		t.Fatalf("create logstore: %v", err)
 	}
 	return &Service{
-		cfg:      config.Config{DataDir: filepath.Join(root, "data")},
-		logger:   logger,
-		attempts: map[int64]*attemptTracking{},
+		cfg:           config.Config{DataDir: filepath.Join(root, "data")},
+		logger:        logger,
+		sessions:      map[int64]*chatSession{},
+		sessionToChat: map[string]int64{},
+		finalSeq:      map[string]int64{},
+		finalWaiter:   map[string][]chan struct{}{},
+		attempts:      map[string]*attemptTracking{},
+	}
+}
+
+func textToolResult(text string) *model.Message {
+	return &model.Message{
+		Role: model.RoleToolResult,
+		ContentRaw: []any{model.TextContent{
+			Type: model.ContentText,
+			Text: text,
+		}},
 	}
 }
