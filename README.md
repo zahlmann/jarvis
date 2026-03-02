@@ -34,8 +34,8 @@ When `wake-jarvis.sh` asks for the public URL, use this Cloudflare Zero Trust fl
 
 - Telegram webhook ingress (`/telegram/webhook`)
 - `phi`-backed agent runtime (ChatGPT subscription mode via `PHI_AUTH_MODE=chatgpt`)
-- Full `phi` coding tools enabled (`write/read/edit/bash`)
-- Explicit-send contract: agent must call `./bin/jarvisctl telegram ...` from repo root; final assistant text is not auto-delivered
+- `phi` runtime with the `bash` tool
+- Explicit-send contract via prompting: agent sends user-visible output through `./bin/jarvisctl telegram ...`; final assistant text is not auto-delivered
 - Persistent memory in parquet (`jarvisctl memory save|retrieve|list|remove`) with background embedding backfill every minute
 - Rolling recent-chat cache for fast recap (`jarvisctl recent --chat <id> --pairs 10`)
 - Internal scheduler with persistent jobs + internal `heartbeat`
@@ -61,7 +61,6 @@ Feature toggles:
 
 - `JARVIS_PHI_TRANSCRIPTION_ENABLED` controls inbound voice transcription handling (default `true`)
 - `JARVIS_PHI_VOICE_REPLY_ENABLED` controls `jarvisctl telegram send-voice`
-- `JARVIS_PHI_THINKING` controls model reasoning effort (`none|minimal|low|medium|high|xhigh`, default `xhigh`)
 - `JARVIS_PHI_MEMORY_EMBEDDING_MODEL` controls the embedding model for memory retrieval (default `text-embedding-3-small`)
 
 If using voice:

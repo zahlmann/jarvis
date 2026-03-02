@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/zahlmann/phi/agent"
 	"github.com/zahlmann/phi/ai/provider"
 )
 
@@ -23,7 +22,6 @@ type Config struct {
 
 	PhiAuthMode     provider.AuthMode
 	PhiModelID      string
-	PhiThinking     agent.ThinkingLevel
 	PhiToolRoot     string
 	PhiSystemPrompt string
 
@@ -100,7 +98,6 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 	heartbeatEnabled := parseBoolDefault("JARVIS_PHI_HEARTBEAT_ENABLED", true)
 	heartbeatPrompt := defaultHeartbeatPrompt()
 
-	thinking := parseThinkingLevel(os.Getenv("JARVIS_PHI_THINKING"))
 	openAIKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	elevenLabsKey := strings.TrimSpace(os.Getenv("ELEVENLABS_API_KEY"))
 	userName := strings.TrimSpace(os.Getenv("JARVIS_USER_NAME"))
@@ -119,7 +116,6 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 		UserName:             userName,
 		PhiAuthMode:          authMode,
 		PhiModelID:           modelID,
-		PhiThinking:          thinking,
 		PhiToolRoot:          toolRoot,
 		PhiSystemPrompt:      defaultPrompt(userName),
 		PhiAPIKey:            openAIKey,
@@ -182,15 +178,14 @@ func defaultPrompt(userName string) string {
 		"For Python work, always use uv-based workflows: prefer `uv run python ...` in projects and `uv run --with <dependency> ...` for one-off scripts.",
 		"Do not use plain `python` or `pip` commands unless uv is unavailable.",
 		"When a command may fail, avoid chaining final user notification behind `&&`; send the Telegram completion/failure update in a separate command.",
-		"To send anything to Telegram, explicitly call `./bin/jarvisctl telegram ...` using bash.",
+		"All user-visible replies must be sent through `./bin/jarvisctl telegram ...` executed from bash.",
 		"For each inbound Telegram message, send at least one reply via `./bin/jarvisctl telegram send-text --chat <Chat ID> --text ...` unless the user explicitly asks for silence.",
 		"Before each Telegram reply, always send typing status first via `./bin/jarvisctl telegram typing --chat <Chat ID>`.",
 		"When constructing shell commands for `jarvisctl telegram send-text --text`, quote the full `--text` payload safely (prefer single quotes) so backticks and newlines are preserved.",
 		"If you need to mention paths like internal/config/config.go in a Telegram message sent via bash, keep them as plain text (no backticks) and quote the overall `--text` argument safely.",
 		"Do not invent Telegram CLI variants; use exactly `send-text --chat --text` for text replies.",
-		"If a send command fails, inspect stderr and retry with the exact supported command format.",
-		"Do not assume your final assistant text is delivered to the user.",
-		"If you do not call a telegram send command, nothing is sent.",
+		"Assistant final responses are internal and are not delivered to Telegram automatically.",
+		"If you do not run a telegram send command, the user receives nothing.",
 		"Use --help when exploring unfamiliar CLI commands.",
 		"For reminders or scheduled tasks, set them up first before unrelated work.",
 		"When scheduling tasks, use `./bin/jarvisctl schedule ...` and keep schedules precise.",
@@ -253,25 +248,6 @@ func looksLikeRepoRoot(root string) bool {
 		}
 	}
 	return true
-}
-
-func parseThinkingLevel(raw string) agent.ThinkingLevel {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "none":
-		return agent.ThinkingNone
-	case "minimal":
-		return agent.ThinkingMinimal
-	case "low":
-		return agent.ThinkingLow
-	case "medium":
-		return agent.ThinkingMedium
-	case "high":
-		return agent.ThinkingHigh
-	case "xhigh":
-		return agent.ThinkingXHigh
-	default:
-		return agent.ThinkingXHigh
-	}
 }
 
 func defaultString(key, fallback string) string {

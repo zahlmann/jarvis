@@ -2,11 +2,8 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -16,11 +13,6 @@ import (
 	"github.com/zahlmann/jarvis-phi/internal/store"
 	"github.com/zahlmann/phi"
 	"github.com/zahlmann/phi/ai/model"
-)
-
-var (
-	okTruePattern    = regexp.MustCompile(`"ok"\s*:\s*true`)
-	messageIDPattern = regexp.MustCompile(`"message_id"\s*:\s*[0-9]+`)
 )
 
 const (
@@ -54,31 +46,7 @@ type Service struct {
 	finalSeq    map[string]int64
 	finalWaiter map[string][]chan struct{}
 
-	trackMu  sync.Mutex
-	attempts map[string]*attemptTracking
-
 	recent *store.RecentStore
-}
-
-type callKind uint8
-
-const (
-	callKindUnknown callKind = iota
-	callKindSend
-	callKindWork
-)
-
-type attemptTracking struct {
-	pendingCalls map[string]callKind
-	sequence     int
-	lastSendSeq  int
-	lastWorkSeq  int
-	sendCalled   bool
-}
-
-type attemptStatus struct {
-	sendCalled    bool
-	sendAfterWork bool
 }
 
 type chatSession struct {
@@ -115,7 +83,6 @@ func New(cfg config.Config, logger *logstore.Store) *Service {
 		sessionToChat: map[string]int64{},
 		finalSeq:      map[string]int64{},
 		finalWaiter:   map[string][]chan struct{}{},
-		attempts:      map[string]*attemptTracking{},
 		recent:        recentStore,
 	}
 
@@ -204,103 +171,56 @@ func (s *Service) runPrompt(cs *chatSession, input PromptInput) error {
 		"chars":   len(input.Message),
 	})
 
-	requireTelegramSend := strings.EqualFold(strings.TrimSpace(input.Source), "telegram")
-	maxAttempts := 1
-	if requireTelegramSend {
-		maxAttempts = 2
-	}
+	cs.mu.Lock()
+	sessionID := strings.TrimSpace(cs.sessionID)
+	cs.mu.Unlock()
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		cs.mu.Lock()
-		sessionID := strings.TrimSpace(cs.sessionID)
-		cs.mu.Unlock()
-
-		envelope := s.buildPromptEnvelope(input, sessionID == "" && attempt == 1)
-		if attempt > 1 {
-			envelope = s.buildNoSendRecoveryEnvelope(input, attempt)
-			s.log("runtime", "retry_prompt_after_no_send", map[string]any{
-				"chat_id": cs.chatID,
-				"source":  input.Source,
-				"attempt": attempt,
-			})
-		}
-
-		previousFinal := int64(0)
-		if sessionID == "" {
-			started, err := s.runtime.StartSession(context.Background(), phi.StartSessionRequest{
-				Prompt: envelope,
-				Images: input.Images,
-			})
-			if err != nil {
-				return err
-			}
-			sessionID = started.SessionID
-			cs.mu.Lock()
-			if cs.sessionID == "" {
-				cs.sessionID = sessionID
-			}
-			cs.mu.Unlock()
-			s.mu.Lock()
-			s.sessionToChat[sessionID] = cs.chatID
-			s.mu.Unlock()
-			s.log("runtime", "session_created", map[string]any{
-				"chat_id":    cs.chatID,
-				"session_id": sessionID,
-				"model":      s.cfg.PhiModelID,
-				"auth_mode":  string(s.cfg.PhiAuthMode),
-			})
-		} else {
-			s.resetAttemptTracking(sessionID)
-			previousFinal = s.finalSequence(sessionID)
-			if err := s.runtime.QueueMessage(context.Background(), phi.QueueMessageRequest{
-				SessionID: sessionID,
-				Prompt:    envelope,
-				Images:    input.Images,
-			}); err != nil {
-				return err
-			}
-		}
-
-		if err := s.waitForFinalEvent(sessionID, previousFinal, finalEventTimeout); err != nil {
+	envelope := s.buildPromptEnvelope(input, sessionID == "")
+	previousFinal := int64(0)
+	if sessionID == "" {
+		started, err := s.runtime.StartSession(context.Background(), phi.StartSessionRequest{
+			Prompt: envelope,
+			Images: input.Images,
+		})
+		if err != nil {
 			return err
 		}
-
-		status := s.getAttemptStatus(sessionID)
-		if !requireTelegramSend || (status.sendCalled && status.sendAfterWork) {
-			s.log("runtime", "prompt_end", map[string]any{
-				"chat_id":     cs.chatID,
-				"source":      input.Source,
-				"attempts":    attempt,
-				"phi_session": sessionID,
-			})
-			return nil
+		sessionID = started.SessionID
+		cs.mu.Lock()
+		if cs.sessionID == "" {
+			cs.sessionID = sessionID
 		}
-
-		if !status.sendCalled {
-			s.log("runtime", "no_explicit_send", map[string]any{
-				"chat_id":   cs.chatID,
-				"source":    input.Source,
-				"attempt":   attempt,
-				"sessionID": sessionID,
-			})
-		} else {
-			s.log("runtime", "send_not_final", map[string]any{
-				"chat_id":   cs.chatID,
-				"source":    input.Source,
-				"attempt":   attempt,
-				"sessionID": sessionID,
-			})
+		cs.mu.Unlock()
+		s.mu.Lock()
+		s.sessionToChat[sessionID] = cs.chatID
+		s.mu.Unlock()
+		s.log("runtime", "session_created", map[string]any{
+			"chat_id":    cs.chatID,
+			"session_id": sessionID,
+			"model":      s.cfg.PhiModelID,
+			"auth_mode":  string(s.cfg.PhiAuthMode),
+		})
+	} else {
+		previousFinal = s.finalSequence(sessionID)
+		if err := s.runtime.QueueMessage(context.Background(), phi.QueueMessageRequest{
+			SessionID: sessionID,
+			Prompt:    envelope,
+			Images:    input.Images,
+		}); err != nil {
+			return err
 		}
 	}
 
-	cs.mu.Lock()
-	sessionID := cs.sessionID
-	cs.mu.Unlock()
-	status := s.getAttemptStatus(sessionID)
-	if status.sendCalled && !status.sendAfterWork {
-		return fmt.Errorf("telegram send happened before work completion; no final send after work in %d attempt(s)", maxAttempts)
+	if err := s.waitForFinalEvent(sessionID, previousFinal, finalEventTimeout); err != nil {
+		return err
 	}
-	return fmt.Errorf("no successful telegram send command after %d attempt(s)", maxAttempts)
+
+	s.log("runtime", "prompt_end", map[string]any{
+		"chat_id":     cs.chatID,
+		"source":      input.Source,
+		"phi_session": sessionID,
+	})
+	return nil
 }
 
 func (s *Service) getOrCreateChatSession(chatID int64) *chatSession {
@@ -322,12 +242,7 @@ func (s *Service) handleRuntimeEvent(event phi.Event) {
 		return
 	}
 
-	switch event.Type {
-	case phi.EventToolCallStarted:
-		s.markPendingToolCall(sessionID, event.ToolCallID, callKindUnknown)
-	case phi.EventToolCallFinished:
-		s.recordToolCallResult(sessionID, event.ToolCallID, event.ToolName, event.ToolResult, event.IsError)
-	case phi.EventFinalMessage:
+	if event.Type == phi.EventFinalMessage {
 		s.markFinalEvent(sessionID)
 	}
 }
@@ -505,33 +420,6 @@ func truncatePromptText(raw string, maxChars int) string {
 	return string(runes[:maxChars-3]) + "..."
 }
 
-func (s *Service) buildNoSendRecoveryEnvelope(input PromptInput, attempt int) string {
-	loc := time.UTC
-	if tz, err := time.LoadLocation(s.cfg.Timezone); err == nil {
-		loc = tz
-	}
-	now := time.Now().In(loc)
-
-	parts := []string{
-		"[System follow-up: the previous completion ended without sending a Telegram reply.]",
-		fmt.Sprintf("[Retry attempt: %d]", attempt),
-		fmt.Sprintf("[Chat ID: %d]", input.ChatID),
-		fmt.Sprintf("[Local time: %s]", now.Format("2006-01-02 15:04 MST")),
-		fmt.Sprintf("[Repo root: %s]", s.cfg.PhiToolRoot),
-		"[Requirement: treat the original user message as unresolved and execute its requested work now in this turn.]",
-		"[Requirement: if the request involves code/prompt/debugging actions, run the required repo commands first, then send the final Telegram confirmation.]",
-		"[Requirement: do not send an early ack before doing the requested work.]",
-		"[Requirement: if you send any progress update, still send a final completion/failure Telegram message after the last work command.]",
-		"[Requirement: before each Telegram reply, execute `./bin/jarvisctl telegram typing --chat <Chat ID>` and ensure a successful `./bin/jarvisctl telegram send-text --chat <Chat ID> --text ...` for user-visible output.]",
-		"[When running CLI commands, use the repo root above; do not use `cd ~`.]",
-		"[Do not return an empty assistant response.]",
-		"[If the user just confirmed a prior yes/no question, continue with the requested action instead of asking the same confirmation again.]",
-		"",
-		"Original message: " + input.Message,
-	}
-	return strings.Join(parts, "\n")
-}
-
 func (s *Service) logPhiEvent(event phi.Event) {
 	fields := map[string]any{
 		"event_type": string(event.Type),
@@ -575,92 +463,6 @@ func (s *Service) chatIDForSession(sessionID string) (int64, bool) {
 	return id, ok
 }
 
-func (s *Service) resetAttemptTracking(sessionID string) {
-	if strings.TrimSpace(sessionID) == "" {
-		return
-	}
-	s.trackMu.Lock()
-	defer s.trackMu.Unlock()
-	s.attempts[sessionID] = &attemptTracking{pendingCalls: map[string]callKind{}}
-}
-
-func (s *Service) markPendingToolCall(sessionID, toolCallID string, kind callKind) {
-	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(toolCallID) == "" {
-		return
-	}
-	s.trackMu.Lock()
-	defer s.trackMu.Unlock()
-	state := s.ensureAttemptTrackingLocked(sessionID)
-	if state.pendingCalls == nil {
-		state.pendingCalls = map[string]callKind{}
-	}
-	state.pendingCalls[toolCallID] = kind
-}
-
-func (s *Service) recordToolCallResult(sessionID, toolCallID, toolName string, toolResult *model.Message, isError bool) {
-	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(toolCallID) == "" {
-		return
-	}
-
-	resultText := ""
-	if toolResult != nil {
-		resultText = extractText(toolResult.ContentRaw)
-	}
-
-	s.trackMu.Lock()
-	defer s.trackMu.Unlock()
-	state := s.ensureAttemptTrackingLocked(sessionID)
-	kind, ok := state.pendingCalls[toolCallID]
-	if ok {
-		delete(state.pendingCalls, toolCallID)
-	}
-
-	if strings.EqualFold(strings.TrimSpace(toolName), "bash") {
-		if telegramSendSucceeded(resultText) {
-			kind = callKindSend
-		} else {
-			kind = callKindWork
-		}
-	} else if kind == callKindUnknown {
-		kind = callKindWork
-	}
-
-	state.sequence++
-	switch kind {
-	case callKindSend:
-		if !isError {
-			state.sendCalled = true
-			state.lastSendSeq = state.sequence
-		}
-	case callKindWork:
-		state.lastWorkSeq = state.sequence
-	}
-}
-
-func (s *Service) getAttemptStatus(sessionID string) attemptStatus {
-	s.trackMu.Lock()
-	defer s.trackMu.Unlock()
-	state := s.ensureAttemptTrackingLocked(sessionID)
-	sendAfterWork := false
-	if state.sendCalled {
-		sendAfterWork = state.lastWorkSeq == 0 || state.lastSendSeq > state.lastWorkSeq
-	}
-	return attemptStatus{
-		sendCalled:    state.sendCalled,
-		sendAfterWork: sendAfterWork,
-	}
-}
-
-func (s *Service) ensureAttemptTrackingLocked(sessionID string) *attemptTracking {
-	state := s.attempts[sessionID]
-	if state != nil {
-		return state
-	}
-	state = &attemptTracking{pendingCalls: map[string]callKind{}}
-	s.attempts[sessionID] = state
-	return state
-}
-
 func extractText(content []any) string {
 	parts := []string{}
 	for _, item := range content {
@@ -680,74 +482,6 @@ func extractText(content []any) string {
 		}
 	}
 	return strings.Join(parts, "\n")
-}
-
-func telegramSendSucceeded(toolResult string) bool {
-	trimmed := strings.TrimSpace(toolResult)
-	if trimmed == "" {
-		return false
-	}
-
-	decoder := json.NewDecoder(strings.NewReader(trimmed))
-	for {
-		var parsed any
-		if err := decoder.Decode(&parsed); err != nil {
-			if err == io.EOF {
-				break
-			}
-			// Fallback for mixed outputs where JSON is embedded in plain text.
-			return okTruePattern.MatchString(trimmed) && messageIDPattern.MatchString(trimmed)
-		}
-		if jsonValueHasOKTrue(parsed) && jsonValueHasMessageID(parsed) {
-			return true
-		}
-	}
-	return false
-}
-
-func jsonValueHasOKTrue(value any) bool {
-	switch v := value.(type) {
-	case map[string]any:
-		if ok, exists := v["ok"].(bool); exists && ok {
-			return true
-		}
-		for _, child := range v {
-			if jsonValueHasOKTrue(child) {
-				return true
-			}
-		}
-	case []any:
-		for _, child := range v {
-			if jsonValueHasOKTrue(child) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func jsonValueHasMessageID(value any) bool {
-	switch v := value.(type) {
-	case map[string]any:
-		if raw, exists := v["message_id"]; exists {
-			switch raw.(type) {
-			case float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
-				return true
-			}
-		}
-		for _, child := range v {
-			if jsonValueHasMessageID(child) {
-				return true
-			}
-		}
-	case []any:
-		for _, child := range v {
-			if jsonValueHasMessageID(child) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (s *Service) log(component, action string, fields map[string]any) {
