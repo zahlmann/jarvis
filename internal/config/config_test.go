@@ -74,10 +74,13 @@ func TestDefaultPromptTypingAndFormattingPreferences(t *testing.T) {
 	prompt := defaultPrompt("alex")
 	required := []string{
 		"All user-visible replies must be sent through `./bin/jarvisctl telegram ...` executed from bash.",
+		"Treat each inbound Telegram message as unresolved until a successful `send-text --chat --text` completes in the same turn.",
+		"Do not rely on a retry turn; finish the requested work and deliver the final Telegram reply in one pass whenever possible.",
 		"Before each Telegram reply, always send typing status first",
 		"`./bin/jarvisctl telegram typing --chat <Chat ID>`",
 		"Assistant final responses are internal and are not delivered to Telegram automatically.",
 		"If you do not run a telegram send command, the user receives nothing.",
+		"For `jarvisctl`, prefer subcommand help (for example `./bin/jarvisctl schedule add --help`)",
 		"embed inline code snippets with single backticks",
 		"triple-backtick fences",
 		"quote the full `--text` payload safely",
