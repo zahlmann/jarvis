@@ -158,22 +158,6 @@ func TestDefaultToolRootReturnsCWDWhenNoSignals(t *testing.T) {
 	}
 }
 
-func TestDefaultHeartbeatPromptCleanupCriteria(t *testing.T) {
-	prompt := defaultHeartbeatPrompt()
-	required := []string{
-		"deleting duplicates",
-		"superseded by newer info",
-		"completed or expired items",
-		"low-retrieval-value one-off chatter",
-		"clearly incorrect entries",
-	}
-	for _, fragment := range required {
-		if !strings.Contains(prompt, fragment) {
-			t.Fatalf("defaultHeartbeatPrompt missing %q", fragment)
-		}
-	}
-}
-
 func mustWriteFile(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

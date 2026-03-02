@@ -92,19 +92,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("scheduler store error: %v", err)
 	}
-	heartbeat, err := scheduler.NewHeartbeat(
-		filepath.Join(cfg.DataDir, "heartbeat", "state.json"),
-		cfg.HeartbeatEnabled,
-		cfg.DefaultChatID,
-		cfg.HeartbeatPrompt,
-	)
-	if err != nil {
-		log.Fatalf("heartbeat init error: %v", err)
-	}
 
 	engine := scheduler.NewEngine(
 		schedStore,
-		heartbeat,
 		func(ctx context.Context, trigger scheduler.Trigger) error {
 			application.runtime.Enqueue(runtime.PromptInput{
 				ChatID:   trigger.ChatID,
@@ -114,7 +104,6 @@ func main() {
 			})
 			return nil
 		},
-		application.runtime.IsBusy,
 		logger,
 	)
 	if err := engine.Require(); err != nil {

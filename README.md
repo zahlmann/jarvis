@@ -38,10 +38,9 @@ When `wake-jarvis.sh` asks for the public URL, use this Cloudflare Zero Trust fl
 - Explicit-send contract via prompting: agent sends user-visible output through `./bin/jarvisctl telegram ...`; final assistant text is not auto-delivered
 - Persistent memory in parquet (`jarvisctl memory save|retrieve|list|remove`) with background embedding backfill every minute
 - Rolling recent-chat cache for fast recap (`jarvisctl recent --chat <id> --pairs 10`)
-- Internal scheduler with persistent jobs + internal `heartbeat`
-- Heartbeat policy: every 30 minutes with jitter `-10m..+10m`; skipped if busy through window
+- Internal scheduler with persistent reminder jobs (`jarvisctl schedule ...`)
 - Default [Bring app](https://www.getbring.com/) integration (`jarvisctl bring list|add|remove|complete`)
-- Structured JSONL logs for inbound, stream/tool events, scheduler decisions, and outbound CLI sends
+- Structured JSONL logs for inbound, stream/tool events, scheduler activity, and outbound CLI sends
 
 ## Env
 
@@ -55,7 +54,6 @@ For manual setup, copy `.env.example` to `.env` and set at least:
 - `PHI_AUTH_MODE=chatgpt`
 - `PHI_CHATGPT_ACCESS_TOKEN` (or preexisting `~/.phi/chatgpt_tokens.json`)
 - `OPENAI_API_KEY` (required for memory embeddings + voice transcription)
-- `JARVIS_PHI_DEFAULT_CHAT_ID` (required for heartbeat routing)
 
 Feature toggles:
 
@@ -72,6 +70,10 @@ If using the Bring app:
 - `BRING_EMAIL`
 - `BRING_PASSWORD`
 - optional `BRING_LIST_UUID` or `BRING_LIST_NAME`
+
+Optional:
+
+- `JARVIS_PHI_DEFAULT_CHAT_ID` (restrict inbound processing to one Telegram chat)
 
 ## Commands
 
@@ -164,7 +166,6 @@ go run ./cmd/jarvisctl recent --chat 123456 --pairs 10
 - `data/memory/memories.parquet`
 - `data/sessions/chat-<id>.jsonl`
 - `data/scheduler/jobs.json`
-- `data/heartbeat/state.json`
 
 ## Tests
 

@@ -37,9 +37,6 @@ type Config struct {
 	ElevenLabsAPIKey     string
 	ElevenLabsVoiceID    string
 	VoiceReplyEnabled    bool
-
-	HeartbeatEnabled bool
-	HeartbeatPrompt  string
 }
 
 type LoadOptions struct {
@@ -95,9 +92,6 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 		defaultChatID = parsed
 	}
 
-	heartbeatEnabled := parseBoolDefault("JARVIS_PHI_HEARTBEAT_ENABLED", true)
-	heartbeatPrompt := defaultHeartbeatPrompt()
-
 	openAIKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	elevenLabsKey := strings.TrimSpace(os.Getenv("ELEVENLABS_API_KEY"))
 	userName := strings.TrimSpace(os.Getenv("JARVIS_USER_NAME"))
@@ -128,8 +122,6 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 		ElevenLabsAPIKey:     elevenLabsKey,
 		ElevenLabsVoiceID:    defaultString("ELEVENLABS_VOICE_ID", "EkK5I93UQWFDigLMpZcX"),
 		VoiceReplyEnabled:    parseBoolDefault("JARVIS_PHI_VOICE_REPLY_ENABLED", elevenLabsKey != ""),
-		HeartbeatEnabled:     heartbeatEnabled,
-		HeartbeatPrompt:      heartbeatPrompt,
 	}
 
 	if strings.TrimSpace(cfg.OpenAIAPIKey) == "" {
@@ -192,12 +184,11 @@ func defaultPrompt(userName string) string {
 		"When the user mentions grocery/shopping list intent (e.g. einkaufsliste, shopping list, bring list, add/remove items on the list), use `./bin/jarvisctl bring ...` via bash.",
 		"For Bring operations, use exact subcommands: `bring list`, `bring add <item...>`, `bring remove <item...>`, `bring complete <item...>`.",
 		"After Bring commands, send a short Telegram confirmation with what was changed or why it failed.",
-		"System-instruction source of truth is `internal/config/config.go`: conversational behavior in `defaultPrompt(...)`, heartbeat behavior in `defaultHeartbeatPrompt()`.",
+		"System-instruction source of truth is `internal/config/config.go`, especially `defaultPrompt(...)` for conversational behavior.",
 		"Memory is core behavior: for most inbound user messages, first run `./bin/jarvisctl memory retrieve --query \"<message>\"` and use relevant results.",
 		"When the user implicitly references very recent chat context and details are unclear, run `./bin/jarvisctl recent --chat <Chat ID> --pairs 10` to recap the latest back-and-forth before answering.",
 		"When the user shares durable preferences, personal facts, ongoing projects, constraints, or plans worth looking up later, save them with `./bin/jarvisctl memory save --keywords \"k1,k2,...\" --memory \"...\"`.",
 		"When the user asks you to change your own behavior (writing style, emoji use, tone, how to address them, or similar), first go directly to `internal/config/config.go` and update `defaultPrompt(...)`; do not spend time searching elsewhere unless that path no longer exists. Do not save that request as memory.",
-		"If the user says you could write more often unprompted, acknowledge warmly but do not start random proactive messages; only message without prompt when there is concrete, useful, actionable content for them.",
 		"Treat cues like sei eher so as explicit behavior-change requests: update the prompt immediately, then commit and push right away.",
 		"Use concise, searchable keywords that maximize retrieval quality.",
 		"Memory cleanup is allowed: review with `./bin/jarvisctl memory list` and delete duplicate, superseded, expired/completed, low-retrieval-value, or incorrect entries using `./bin/jarvisctl memory remove --id <memory-id>`.",
@@ -209,10 +200,6 @@ func defaultPrompt(userName string) string {
 		"After completing action requests, send one concise completion message with concrete outcomes (for example files changed and commit hash).",
 		"Keep commit messages short and simple; if one commit includes multiple changes, separate parts with ';'.",
 	}, " ")
-}
-
-func defaultHeartbeatPrompt() string {
-	return "Heartbeat check-in: review recent context, local time, and long-term memory. Run memory retrieval/list commands and clean memory by deleting duplicates, entries superseded by newer info, completed or expired items, low-retrieval-value one-off chatter, and clearly incorrect entries; keep durable preferences, identity details, and ongoing project context. If the user has asked for occasional proactive messages, send brief proactive messages more regularly (not just rare exceptions), while keeping each one concrete, useful, and non-repetitive; avoid empty check-ins and still respect quiet hours. Only send a Telegram message when there is a concrete, meaningful reason for the user right now (e.g., explicit follow-up they asked for, important reminder due, or genuinely useful update). If you send, keep it short, specific, and natural, and include enough context so it makes sense on its own. Never send vague or meta pings like just checking in, i will message later, or anything without actionable content. Respect quiet hours (00:00-08:00 local) unless it is urgent."
 }
 
 func defaultToolRoot(cwd string, executablePathFn func() (string, error)) string {

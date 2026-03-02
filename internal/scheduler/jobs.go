@@ -14,8 +14,7 @@ const (
 	ModeCron     JobMode = "cron"
 	ModeInterval JobMode = "interval"
 
-	KindUser      JobKind = "user"
-	KindHeartbeat JobKind = "heartbeat"
+	KindUser JobKind = "user"
 )
 
 type Job struct {

@@ -126,13 +126,6 @@ func (s *Service) Enqueue(input PromptInput) {
 	go s.runLoop(cs, input)
 }
 
-func (s *Service) IsBusy(chatID int64) bool {
-	cs := s.getOrCreateChatSession(chatID)
-	cs.mu.Lock()
-	defer cs.mu.Unlock()
-	return cs.running
-}
-
 func (s *Service) runLoop(cs *chatSession, first PromptInput) {
 	current := first
 	for {

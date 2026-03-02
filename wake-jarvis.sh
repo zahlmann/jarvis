@@ -269,10 +269,6 @@ else
   upsert_env "JARVIS_PHI_VOICE_REPLY_ENABLED" "false"
 fi
 
-if [[ -z "$(get_env_value "JARVIS_PHI_DEFAULT_CHAT_ID")" ]]; then
-  upsert_env "JARVIS_PHI_HEARTBEAT_ENABLED" "false"
-fi
-
 if ask_yes_no "Do you want to set up Bring shopping list integration now?" "n"; then
   prompt_value "BRING_EMAIL" "Bring account email"
   prompt_value "BRING_PASSWORD" "Bring account password" true
@@ -394,7 +390,7 @@ if [[ -n "$webhook_base_url" ]]; then
 fi
 
 if [[ -z "$(get_env_value "JARVIS_PHI_DEFAULT_CHAT_ID")" ]]; then
-  printf "\nHeartbeat chat detection:\n"
+  printf "\nDefault chat id detection (optional allowlist):\n"
   if [[ "$webhook_configured" != "true" ]]; then
     printf "Skipping automatic chat id detection because the webhook is not configured yet.\n"
     printf "Set JARVIS_PHI_DEFAULT_CHAT_ID later after inbound messages appear in %s.\n" "$LOG_DIR/events-YYYY-MM-DD.jsonl"
@@ -408,7 +404,7 @@ if [[ -z "$(get_env_value "JARVIS_PHI_DEFAULT_CHAT_ID")" ]]; then
     read -r -p "Press Enter after sending it (or type skip): " detect_input
     detect_input="$(echo "$detect_input" | tr '[:upper:]' '[:lower:]' | xargs)"
     if [[ "$detect_input" == "skip" ]]; then
-      printf "Skipped automatic chat id detection. Heartbeat remains disabled.\n"
+      printf "Skipped automatic chat id detection. No chat allowlist configured.\n"
     else
       detected_chat_id=""
       detected_source="new"
@@ -431,21 +427,19 @@ if [[ -z "$(get_env_value "JARVIS_PHI_DEFAULT_CHAT_ID")" ]]; then
 
       if [[ -n "$detected_chat_id" ]]; then
         upsert_env "JARVIS_PHI_DEFAULT_CHAT_ID" "$detected_chat_id"
-        upsert_env "JARVIS_PHI_HEARTBEAT_ENABLED" "true"
         if [[ "$detected_source" == "history" ]]; then
           printf "No new inbound message detected within %s seconds.\n" "$chat_detect_wait_seconds"
-          printf "Used existing inbound logs and detected chat id %s; enabled heartbeat.\n" "$detected_chat_id"
+          printf "Used existing inbound logs and detected chat id %s.\n" "$detected_chat_id"
         else
-          printf "Detected chat id %s and enabled heartbeat.\n" "$detected_chat_id"
+          printf "Detected chat id %s.\n" "$detected_chat_id"
         fi
-        printf "Restart Jarvis to apply heartbeat routing with the new chat id.\n"
+        printf "Restart Jarvis to apply chat allowlist with the new chat id.\n"
       else
-        upsert_env "JARVIS_PHI_HEARTBEAT_ENABLED" "false"
         printf "Could not detect a new inbound Telegram message in logs within %s seconds.\n" "$chat_detect_wait_seconds"
         if [[ "${#known_chat_ids[@]}" -gt 1 ]]; then
           printf "Found multiple chat ids in existing inbound logs (%s).\n" "$(IFS=,; echo "${known_chat_ids[*]}")"
         fi
-        printf "Heartbeat stays disabled; rerun setup after messaging the bot or set JARVIS_PHI_DEFAULT_CHAT_ID manually.\n"
+        printf "No chat allowlist configured; rerun setup after messaging the bot or set JARVIS_PHI_DEFAULT_CHAT_ID manually.\n"
       fi
     fi
   fi
