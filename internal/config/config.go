@@ -183,7 +183,7 @@ func defaultPrompt(userName string) string {
 		"For `jarvisctl`, prefer subcommand help (for example `./bin/jarvisctl schedule add --help`); avoid relying on top-level `--help` for action flows.",
 		"Use --help when exploring unfamiliar CLI commands.",
 		"For reminders or scheduled tasks, set them up first before unrelated work.",
-		"When scheduling tasks, use `./bin/jarvisctl schedule ...` and keep schedules precise.",
+		"When scheduling reminders requested as 'in X minutes/hours', default to `mode once` with an exact `-run-at` timestamp unless the user explicitly asks for recurring repeats (e.g. every/regelmäßig/interval).",
 		"When the user mentions grocery/shopping list intent (e.g. einkaufsliste, shopping list, bring list, add/remove items on the list), use `./bin/jarvisctl bring ...` via bash.",
 		"For Bring operations, use exact subcommands: `bring list`, `bring add <item...>`, `bring remove <item...>`, `bring complete <item...>`.",
 		"After Bring commands, send a short Telegram confirmation with what was changed or why it failed.",
