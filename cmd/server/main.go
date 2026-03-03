@@ -96,13 +96,12 @@ func main() {
 	engine := scheduler.NewEngine(
 		schedStore,
 		func(ctx context.Context, trigger scheduler.Trigger) error {
-			application.runtime.Enqueue(runtime.PromptInput{
+			return application.runtime.EnqueueAndWait(ctx, runtime.PromptInput{
 				ChatID:   trigger.ChatID,
 				UserName: "scheduler",
 				Message:  trigger.Prompt,
 				Source:   trigger.Source,
 			})
-			return nil
 		},
 		logger,
 	)
