@@ -40,6 +40,62 @@ func TestLoadWithOptionsMemoryEmbeddingModelDefault(t *testing.T) {
 	}
 }
 
+func TestLoadWithOptionsUsesChatGPTTokenFileFallback(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	mustWriteFile(t, filepath.Join(homeDir, ".phi", "chatgpt_tokens.json"), `{
+  "accessToken": "file-token",
+  "accountId": "file-account"
+}`)
+
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("PHI_CHATGPT_ACCESS_TOKEN", "")
+	t.Setenv("PHI_CHATGPT_ACCOUNT_ID", "")
+	t.Setenv("JARVIS_PHI_DATA_DIR", filepath.Join(t.TempDir(), "data"))
+
+	cfg, err := LoadWithOptions(LoadOptions{
+		RequireTelegramToken:  false,
+		RequirePhiCredentials: false,
+	})
+	if err != nil {
+		t.Fatalf("LoadWithOptions failed: %v", err)
+	}
+	if cfg.PhiAccessToken != "file-token" {
+		t.Fatalf("PhiAccessToken=%q want=%q", cfg.PhiAccessToken, "file-token")
+	}
+	if cfg.PhiAccountID != "file-account" {
+		t.Fatalf("PhiAccountID=%q want=%q", cfg.PhiAccountID, "file-account")
+	}
+}
+
+func TestLoadWithOptionsPrefersEnvOverChatGPTTokenFile(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	mustWriteFile(t, filepath.Join(homeDir, ".phi", "chatgpt_tokens.json"), `{
+  "accessToken": "file-token",
+  "accountId": "file-account"
+}`)
+
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("PHI_CHATGPT_ACCESS_TOKEN", "env-token")
+	t.Setenv("PHI_CHATGPT_ACCOUNT_ID", "env-account")
+	t.Setenv("JARVIS_PHI_DATA_DIR", filepath.Join(t.TempDir(), "data"))
+
+	cfg, err := LoadWithOptions(LoadOptions{
+		RequireTelegramToken:  false,
+		RequirePhiCredentials: false,
+	})
+	if err != nil {
+		t.Fatalf("LoadWithOptions failed: %v", err)
+	}
+	if cfg.PhiAccessToken != "env-token" {
+		t.Fatalf("PhiAccessToken=%q want=%q", cfg.PhiAccessToken, "env-token")
+	}
+	if cfg.PhiAccountID != "env-account" {
+		t.Fatalf("PhiAccountID=%q want=%q", cfg.PhiAccountID, "env-account")
+	}
+}
+
 func TestDefaultPromptBehaviorChangesStayOutOfMemory(t *testing.T) {
 	prompt := defaultPrompt("alex")
 	required := []string{
