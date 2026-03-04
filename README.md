@@ -143,6 +143,12 @@ go run ./cmd/jarvisctl schedule add \
 # List schedules
 go run ./cmd/jarvisctl schedule list
 
+# Execute due schedules immediately (sends reminders)
+go run ./cmd/jarvisctl schedule run-due
+
+# Inspect due schedules only (no execution)
+go run ./cmd/jarvisctl schedule run-due --dry-run
+
 # Bring list and add
 go run ./cmd/jarvisctl bring list
 go run ./cmd/jarvisctl bring add "Milk" "Eggs" "Butter:unsalted"

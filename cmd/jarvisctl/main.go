@@ -303,6 +303,7 @@ func handleSchedule(args []string) {
 	case "run-due":
 		fs := flag.NewFlagSet("run-due", flag.ExitOnError)
 		atRaw := fs.String("at", "", "optional RFC3339 timestamp")
+		dryRun := fs.Bool("dry-run", false, "list due jobs without executing")
 		_ = fs.Parse(args[1:])
 		runAt := now
 		if strings.TrimSpace(*atRaw) != "" {
@@ -316,7 +317,106 @@ func handleSchedule(args []string) {
 		if err != nil {
 			cli.Exitf("run-due failed: %v", err)
 		}
-		cli.PrintJSON(map[string]any{"at": runAt.Format(time.RFC3339), "due": due})
+
+		if *dryRun || len(due) == 0 {
+			cli.PrintJSON(map[string]any{
+				"at":       runAt.Format(time.RFC3339),
+				"dry_run":  *dryRun,
+				"due":      due,
+				"executed": []scheduler.Job{},
+			})
+			break
+		}
+
+		if strings.TrimSpace(cfg.TelegramBotToken) == "" {
+			cli.Exitf("run-due execution requires TELEGRAM_BOT_TOKEN (or use --dry-run)")
+		}
+
+		msgIndex, err := store.NewMessageIndex(filepath.Join(cfg.DataDir, "messages", "index.json"))
+		if err != nil {
+			cli.Exitf("run-due message index error: %v", err)
+		}
+		recentStore, err := store.NewRecentStore(filepath.Join(cfg.DataDir, "messages", "recent"), store.DefaultRecentMaxMessages)
+		if err != nil {
+			cli.Exitf("run-due recent store error: %v", err)
+		}
+		tgClient := telegram.NewClient(cfg.TelegramBotToken, cfg.TelegramAPIBase)
+
+		engine := scheduler.NewEngine(
+			st,
+			func(ctx context.Context, trigger scheduler.Trigger) error {
+				text := strings.TrimSpace(trigger.Prompt)
+				if text == "" {
+					return fmt.Errorf("scheduled prompt is empty")
+				}
+
+				res, sendErr := tgClient.SendText(trigger.ChatID, text)
+				if sendErr != nil {
+					return sendErr
+				}
+
+				rec := store.MessageRecord{
+					ChatID:    trigger.ChatID,
+					MessageID: res.MessageID,
+					Direction: "outbound",
+					Sender:    "jarvis",
+					Text:      text,
+				}
+				if putErr := msgIndex.Put(rec); putErr != nil {
+					_ = logger.Write("messages", "index_put_error", map[string]any{
+						"chat_id":    rec.ChatID,
+						"message_id": rec.MessageID,
+						"error":      putErr.Error(),
+					})
+				}
+				if appendErr := recentStore.Append(rec); appendErr != nil {
+					_ = logger.Write("messages", "recent_append_error", map[string]any{
+						"chat_id":    rec.ChatID,
+						"message_id": rec.MessageID,
+						"error":      appendErr.Error(),
+					})
+				}
+				_ = logger.Write("telegram", "send_text", map[string]any{
+					"chat_id":    trigger.ChatID,
+					"message_id": res.MessageID,
+					"chars":      len(text),
+					"source":     trigger.Source,
+				})
+				return nil
+			},
+			logger,
+		)
+		if err := engine.Require(); err != nil {
+			cli.Exitf("run-due setup failed: %v", err)
+		}
+		if err := engine.RunDue(context.Background(), runAt); err != nil {
+			cli.Exitf("run-due execute failed: %v", err)
+		}
+
+		afterJobs, err := st.List()
+		if err != nil {
+			cli.Exitf("run-due post-list failed: %v", err)
+		}
+		dueByID := make(map[string]struct{}, len(due))
+		for _, job := range due {
+			dueByID[job.ID] = struct{}{}
+		}
+		executed := make([]scheduler.Job, 0, len(due))
+		for _, job := range afterJobs {
+			if _, ok := dueByID[job.ID]; ok {
+				executed = append(executed, job)
+			}
+		}
+		sort.Slice(executed, func(i, j int) bool {
+			return executed[i].ID < executed[j].ID
+		})
+
+		cli.PrintJSON(map[string]any{
+			"at":       runAt.Format(time.RFC3339),
+			"dry_run":  false,
+			"due":      due,
+			"executed": executed,
+		})
 	default:
 		cli.Exitf("unknown schedule command: %s", sub)
 	}
