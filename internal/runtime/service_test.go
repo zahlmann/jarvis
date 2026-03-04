@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zahlmann/jarvis-phi/internal/config"
 	"github.com/zahlmann/jarvis-phi/internal/logstore"
@@ -185,6 +186,48 @@ func TestRequiresTelegramSend(t *testing.T) {
 				t.Fatalf("requiresTelegramSend(%q) = %v, want %v", tc.source, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestWaitForFinalEventNoTimeoutWaitsUntilMarked(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestService(t)
+	sessionID := "session-no-timeout"
+	done := make(chan error, 1)
+
+	go func() {
+		done <- svc.waitForFinalEvent(sessionID, 0, 0)
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("waitForFinalEvent() returned early with err=%v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	svc.markFinalEvent(sessionID)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("waitForFinalEvent() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("waitForFinalEvent() did not return after final event")
+	}
+}
+
+func TestWaitForFinalEventTimesOutWhenConfigured(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestService(t)
+	err := svc.waitForFinalEvent("session-timeout", 0, 10*time.Millisecond)
+	if err == nil {
+		t.Fatalf("expected timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "timed out waiting for final message") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

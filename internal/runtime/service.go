@@ -26,7 +26,8 @@ var (
 const (
 	recentRecapExchanges = 10
 	recentRecapTextLimit = 280
-	finalEventTimeout    = 5 * time.Minute
+	// A non-positive value disables the prompt completion timeout.
+	finalEventTimeout = time.Duration(0)
 )
 
 type PromptInput struct {
@@ -405,6 +406,11 @@ func (s *Service) waitForFinalEvent(sessionID string, previous int64, timeout ti
 	waiter := make(chan struct{})
 	s.finalWaiter[sessionID] = append(s.finalWaiter[sessionID], waiter)
 	s.waitMu.Unlock()
+
+	if timeout <= 0 {
+		<-waiter
+		return nil
+	}
 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
