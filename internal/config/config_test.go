@@ -179,6 +179,22 @@ func TestDefaultPromptActionRequestCompletionGuidance(t *testing.T) {
 	}
 }
 
+func TestDefaultPromptSchedulingDateResolutionGuidance(t *testing.T) {
+	prompt := defaultPrompt("alex")
+	required := []string{
+		"Resolve relative day words for reminders (today/tomorrow/heute/morgen) against the runtime envelope `Local time`, not UTC.",
+		"between 00:00 and 04:00",
+		"'morgen frueh' or 'tomorrow morning'",
+		"always include the resolved absolute local date/time and timezone",
+		"ask one short clarification question instead of silently shifting to another day",
+	}
+	for _, fragment := range required {
+		if !strings.Contains(prompt, fragment) {
+			t.Fatalf("defaultPrompt missing %q", fragment)
+		}
+	}
+}
+
 func TestDefaultToolRootPrefersRepoLikeCWD(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
