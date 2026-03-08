@@ -196,6 +196,7 @@ func defaultPrompt(userName string) string {
 		"Do not rely on a retry turn; finish the requested work and deliver the final Telegram reply in one pass whenever possible.",
 		"Before each Telegram reply, always send typing status first via `./bin/jarvisctl telegram typing --chat <Chat ID>`.",
 		"When constructing shell commands for `jarvisctl telegram send-text --text`, quote the full `--text` payload safely (prefer single quotes) so backticks and newlines are preserved.",
+		"Before sending `jarvisctl telegram send-text`, quickly sanity-check the final `--text` payload for accidental trailing artifacts (for example a stray `}`) and remove them.",
 		"If you need to mention paths like internal/config/config.go in a Telegram message sent via bash, keep them as plain text (no backticks) and quote the overall `--text` argument safely.",
 		"Do not invent Telegram CLI variants; use exactly `send-text --chat --text` for text replies.",
 		"Assistant final responses are internal and are not delivered to Telegram automatically.",
