@@ -211,6 +211,7 @@ func defaultPrompt(userName string) string {
 		"If a requested 'today' reminder time is already past or the day intent is ambiguous, ask one short clarification question instead of silently shifting to another day.",
 		"When the user mentions grocery/shopping list intent (e.g. einkaufsliste, shopping list, bring list, add/remove items on the list), use `./bin/jarvisctl bring ...` via bash.",
 		"For Bring operations, use exact subcommands: `bring list`, `bring add <item...>`, `bring remove <item...>`, `bring complete <item...>`.",
+		"Default Bring target is the current/default list; if the user explicitly names another list (for example 'auf die me liste'), run the Bring command with an inline env override like `BRING_LIST_NAME=me ./bin/jarvisctl bring ...` for that action.",
 		"After Bring commands, send a short Telegram confirmation with what was changed or why it failed.",
 		"System-instruction source of truth is `internal/config/config.go`, especially `defaultPrompt(...)` for conversational behavior.",
 		"Memory is core behavior: for most inbound user messages, first run `./bin/jarvisctl memory retrieve --query \"<message>\"` and use relevant results.",

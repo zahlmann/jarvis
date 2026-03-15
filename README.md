@@ -70,6 +70,7 @@ If using the Bring app:
 - `BRING_EMAIL`
 - `BRING_PASSWORD`
 - optional `BRING_LIST_UUID` or `BRING_LIST_NAME`
+- optional `BRING_API_KEY` (defaults to the current Bring web key used by jarvis)
 
 Optional:
 

@@ -16,6 +16,7 @@ import (
 
 const (
 	defaultAPIBaseURL = "https://api.getbring.com/rest"
+	defaultAPIKey     = "cof4Nc6D8saplXjE3h3HXqHH8m7VU2i1Gs0g85Sp"
 	authPath          = "/v2/bringauth"
 	defaultLocale     = "en-US"
 	defaultListName   = "Bring list"
@@ -26,7 +27,7 @@ const (
 )
 
 var defaultHeaders = map[string]string{
-	"X-BRING-API-KEY":       "9f8e7d4c-5554-3f9a-86fd-33225d4f35ad",
+	"X-BRING-API-KEY":       defaultAPIKey,
 	"X-BRING-CLIENT":        "webApp",
 	"X-BRING-COUNTRY":       "US",
 	"X-BRING-RESPONSE-TYPE": "JSON",
@@ -190,6 +191,9 @@ func newClientFromEnv() (*Client, error) {
 	headers := map[string]string{}
 	for k, v := range defaultHeaders {
 		headers[k] = v
+	}
+	if apiKey := strings.TrimSpace(os.Getenv("BRING_API_KEY")); apiKey != "" {
+		headers["X-BRING-API-KEY"] = apiKey
 	}
 	if country := strings.TrimSpace(os.Getenv("BRING_COUNTRY")); country != "" {
 		headers["X-BRING-COUNTRY"] = country
