@@ -32,6 +32,8 @@ func main() {
 		handleTelegram(os.Args[2:])
 	case "schedule":
 		handleSchedule(os.Args[2:])
+	case "parallel":
+		handleParallel(os.Args[2:])
 	case "bring":
 		handleBring(os.Args[2:])
 	case "memory":
@@ -53,6 +55,7 @@ func usage() {
   telegram send-photo --chat <id> --path <file> [--caption <text>]
   telegram set-webhook --url <https-url>/telegram/webhook
   schedule add|update|remove|list|run-due
+  parallel search|extract ...
   bring list|add|remove|complete ...
   memory save|retrieve|list|remove ...
   recent --chat <id> [--pairs <n>]`)

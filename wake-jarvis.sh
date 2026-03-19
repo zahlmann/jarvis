@@ -258,6 +258,13 @@ else
 fi
 upsert_env "JARVIS_PHI_TRANSCRIPTION_ENABLED" "true"
 
+parallel_key="$(get_env_value "PARALLEL_API_KEY")"
+if [[ -n "$parallel_key" ]]; then
+  printf "PARALLEL_API_KEY already configured.\n"
+elif ask_yes_no "Do you want to set up Parallel web search + extraction now?" "y"; then
+  prompt_value "PARALLEL_API_KEY" "Parallel API Key" true
+fi
+
 if ask_yes_no "do you want jarvis to be able to talk to you via voice messages? (ElevenLabs API Key needed)" "n"; then
   prompt_value "ELEVENLABS_API_KEY" "ElevenLabs API Key" true
   if [[ -z "$(get_env_value "ELEVENLABS_VOICE_ID")" ]]; then

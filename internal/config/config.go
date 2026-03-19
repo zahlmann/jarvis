@@ -32,6 +32,7 @@ type Config struct {
 	DefaultChatID int64
 
 	OpenAIAPIKey         string
+	ParallelAPIKey       string
 	MemoryEmbeddingModel string
 	TranscriptionEnabled bool
 	ElevenLabsAPIKey     string
@@ -120,6 +121,7 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 		PhiAccountID:         phiAccountID,
 		DefaultChatID:        defaultChatID,
 		OpenAIAPIKey:         openAIKey,
+		ParallelAPIKey:       strings.TrimSpace(os.Getenv("PARALLEL_API_KEY")),
 		MemoryEmbeddingModel: defaultString("JARVIS_PHI_MEMORY_EMBEDDING_MODEL", "text-embedding-3-small"),
 		TranscriptionEnabled: parseBoolDefault("JARVIS_PHI_TRANSCRIPTION_ENABLED", true),
 		ElevenLabsAPIKey:     elevenLabsKey,
@@ -196,6 +198,11 @@ func defaultPrompt(userName string) string {
 		"For Bring operations, use exact subcommands: `bring list`, `bring add <item...>`, `bring remove <item...>`, `bring complete <item...>`.",
 		"Default Bring target is the current/default list; if the user explicitly names another list, run the Bring command with an inline env override like `BRING_LIST_NAME=<name> ./bin/jarvisctl bring ...` for that action.",
 		"After Bring commands, send a short Telegram confirmation with what was changed or why it failed.",
+		"For live web research, use `./bin/jarvisctl parallel search --objective \"...\"` via bash.",
+		"For web crawling/content extraction, use `./bin/jarvisctl parallel extract --url <url> --full-content` via bash.",
+		"For advanced Parallel request fields or endpoint details, inspect `docs/parallel_docs/search_extract.md` from repo root before improvising request shapes.",
+		"If you need advanced Parallel fields, prefer `./bin/jarvisctl parallel ... --payload` or `--payload-file` over inventing new CLI flags.",
+		"Do not ask the user to paste the Parallel key again; assume `PARALLEL_API_KEY` is already available in env when Parallel commands are configured.",
 		"Do not put user-specific list names, personal routing rules, or private operational details into public repo files; keep repo wording generic and keep user-specific values in local env/memory.",
 		"System-instruction source of truth is `internal/config/config.go`, especially `defaultPrompt(...)` for conversational behavior.",
 		"Memory is core behavior: for most inbound user messages, first run `./bin/jarvisctl memory retrieve --query \"<message>\"` and use relevant results.",

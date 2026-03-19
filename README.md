@@ -39,6 +39,7 @@ When `wake-jarvis.sh` asks for the public URL, use this Cloudflare Zero Trust fl
 - Persistent memory in parquet (`jarvisctl memory save|retrieve|list|remove`) with background embedding backfill every minute
 - Rolling recent-chat cache for fast recap (`jarvisctl recent --chat <id> --pairs 10`)
 - Internal scheduler with persistent reminder jobs (`jarvisctl schedule ...`)
+- Parallel-powered web search + extraction (`jarvisctl parallel search|extract`)
 - Default [Bring app](https://www.getbring.com/) integration (`jarvisctl bring list|add|remove|complete`)
 - Structured JSONL logs for inbound, stream/tool events, scheduler activity, and outbound CLI sends
 
@@ -74,7 +75,12 @@ If using the Bring app:
 
 Optional:
 
+- `PARALLEL_API_KEY` (enables `jarvisctl parallel search|extract`)
 - `JARVIS_PHI_DEFAULT_CHAT_ID` (restrict inbound processing to one Telegram chat)
+
+Parallel docs snapshot:
+
+- `docs/parallel_docs/search_extract.md` is a checked-in Jarvis-focused guide for the two Parallel endpoints that matter here: `search` and `extract`.
 
 ## Commands
 
@@ -162,6 +168,12 @@ go run ./cmd/jarvisctl memory retrieve --query "what coffee does the user like?"
 
 # Recap the latest user/jarvis back-and-forth
 go run ./cmd/jarvisctl recent --chat 123456 --pairs 10
+
+# Search the web with Parallel
+go run ./cmd/jarvisctl parallel search --objective "latest postgres 18 release notes"
+
+# Extract page content with Parallel
+go run ./cmd/jarvisctl parallel extract --url https://www.example.com --full-content
 ```
 
 ## Data layout

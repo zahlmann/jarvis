@@ -179,6 +179,22 @@ func TestDefaultPromptActionRequestCompletionGuidance(t *testing.T) {
 	}
 }
 
+func TestDefaultPromptParallelGuidance(t *testing.T) {
+	prompt := defaultPrompt("alex")
+	required := []string{
+		"`./bin/jarvisctl parallel search --objective \"...\"`",
+		"`./bin/jarvisctl parallel extract --url <url> --full-content`",
+		"`docs/parallel_docs/search_extract.md`",
+		"`./bin/jarvisctl parallel ... --payload`",
+		"`PARALLEL_API_KEY` is already available in env",
+	}
+	for _, fragment := range required {
+		if !strings.Contains(prompt, fragment) {
+			t.Fatalf("defaultPrompt missing %q", fragment)
+		}
+	}
+}
+
 func TestDefaultPromptSchedulingDateResolutionGuidance(t *testing.T) {
 	prompt := defaultPrompt("alex")
 	required := []string{
