@@ -40,7 +40,7 @@ func TestLoadWithOptionsMemoryEmbeddingModelDefault(t *testing.T) {
 	}
 }
 
-func TestLoadWithOptionsUsesChatGPTTokenFileFallback(t *testing.T) {
+func TestLoadWithOptionsDefersChatGPTTokenFileResolutionToPhi(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	mustWriteFile(t, filepath.Join(homeDir, ".phi", "chatgpt_tokens.json"), `{
@@ -60,11 +60,11 @@ func TestLoadWithOptionsUsesChatGPTTokenFileFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadWithOptions failed: %v", err)
 	}
-	if cfg.PhiAccessToken != "file-token" {
-		t.Fatalf("PhiAccessToken=%q want=%q", cfg.PhiAccessToken, "file-token")
+	if cfg.PhiAccessToken != "" {
+		t.Fatalf("PhiAccessToken=%q want empty so phi can resolve fresh credentials", cfg.PhiAccessToken)
 	}
-	if cfg.PhiAccountID != "file-account" {
-		t.Fatalf("PhiAccountID=%q want=%q", cfg.PhiAccountID, "file-account")
+	if cfg.PhiAccountID != "" {
+		t.Fatalf("PhiAccountID=%q want empty so phi can resolve fresh credentials", cfg.PhiAccountID)
 	}
 }
 

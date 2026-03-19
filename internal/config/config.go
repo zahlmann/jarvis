@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,13 +42,6 @@ type Config struct {
 type LoadOptions struct {
 	RequireTelegramToken  bool
 	RequirePhiCredentials bool
-}
-
-type chatGPTTokenFile struct {
-	AccessToken      string `json:"accessToken"`
-	AccountID        string `json:"accountId"`
-	AccessTokenSnake string `json:"access_token"`
-	AccountIDSnake   string `json:"account_id"`
 }
 
 func Load() (Config, error) {
@@ -109,15 +101,6 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 
 	phiAccessToken := strings.TrimSpace(os.Getenv("PHI_CHATGPT_ACCESS_TOKEN"))
 	phiAccountID := strings.TrimSpace(os.Getenv("PHI_CHATGPT_ACCOUNT_ID"))
-	if phiAccessToken == "" || phiAccountID == "" {
-		fileAccessToken, fileAccountID := loadChatGPTCredentialsFromHome()
-		if phiAccessToken == "" {
-			phiAccessToken = fileAccessToken
-		}
-		if phiAccountID == "" {
-			phiAccountID = fileAccountID
-		}
-	}
 
 	cfg := Config{
 		Env:                  defaultString("JARVIS_PHI_ENV", "dev"),
@@ -285,31 +268,4 @@ func parseBoolDefault(key string, fallback bool) bool {
 		return fallback
 	}
 	return v
-}
-
-func loadChatGPTCredentialsFromHome() (string, string) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", ""
-	}
-	path := filepath.Join(homeDir, ".phi", "chatgpt_tokens.json")
-	payload, err := os.ReadFile(path)
-	if err != nil {
-		return "", ""
-	}
-
-	var decoded chatGPTTokenFile
-	if err := json.Unmarshal(payload, &decoded); err != nil {
-		return "", ""
-	}
-
-	accessToken := strings.TrimSpace(decoded.AccessToken)
-	if accessToken == "" {
-		accessToken = strings.TrimSpace(decoded.AccessTokenSnake)
-	}
-	accountID := strings.TrimSpace(decoded.AccountID)
-	if accountID == "" {
-		accountID = strings.TrimSpace(decoded.AccountIDSnake)
-	}
-	return accessToken, accountID
 }
