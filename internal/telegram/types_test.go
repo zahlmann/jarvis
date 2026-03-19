@@ -16,7 +16,11 @@ func TestNormalizeUpdateText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NormalizeUpdate returned error: %v", err)
 	}
-	if n == nil || n.Type != "text" || n.Text != "hello" {
+	if n == nil {
+		t.Fatalf("expected normalized update")
+	}
+	text, ok := n.Message.(TextMessage)
+	if !ok || n.Type() != MessageTypeText || text.Text != "hello" {
 		t.Fatalf("unexpected normalized update: %#v", n)
 	}
 }
@@ -35,7 +39,11 @@ func TestNormalizeUpdateVoice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NormalizeUpdate returned error: %v", err)
 	}
-	if n == nil || n.Type != "voice" || n.VoiceFileID != "voice-file" {
+	if n == nil {
+		t.Fatalf("expected normalized update")
+	}
+	voice, ok := n.Message.(VoiceMessage)
+	if !ok || n.Type() != MessageTypeVoice || voice.FileID != "voice-file" {
 		t.Fatalf("unexpected normalized voice update: %#v", n)
 	}
 }
@@ -58,7 +66,11 @@ func TestNormalizeUpdatePhotoSelectsLargest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NormalizeUpdate returned error: %v", err)
 	}
-	if n == nil || n.Type != "photo" || n.PhotoFileID != "big" {
+	if n == nil {
+		t.Fatalf("expected normalized update")
+	}
+	photo, ok := n.Message.(PhotoMessage)
+	if !ok || n.Type() != MessageTypePhoto || photo.FileID != "big" {
 		t.Fatalf("unexpected normalized photo update: %#v", n)
 	}
 }

@@ -5,6 +5,14 @@ import (
 	"fmt"
 )
 
+type MessageType string
+
+const (
+	MessageTypeText  MessageType = "text"
+	MessageTypeVoice MessageType = "voice"
+	MessageTypePhoto MessageType = "photo"
+)
+
 type Update struct {
 	UpdateID int64    `json:"update_id"`
 	Message  *Message `json:"message,omitempty"`
@@ -52,12 +60,50 @@ type NormalizedUpdate struct {
 	ReplyToMessageID int64
 	UserID           int64
 	UserName         string
-	Type             string
-	Text             string
-	VoiceFileID      string
-	VoiceMimeType    string
-	PhotoFileID      string
-	Caption          string
+	Message          NormalizedMessage
+}
+
+type NormalizedMessage interface {
+	messageType() MessageType
+}
+
+type TextMessage struct {
+	Text string
+}
+
+func (TextMessage) messageType() MessageType {
+	return MessageTypeText
+}
+
+type VoiceMessage struct {
+	FileID   string
+	MimeType string
+}
+
+func (VoiceMessage) messageType() MessageType {
+	return MessageTypeVoice
+}
+
+type PhotoMessage struct {
+	FileID  string
+	Caption string
+}
+
+func (PhotoMessage) messageType() MessageType {
+	return MessageTypePhoto
+}
+
+func (n NormalizedUpdate) Type() MessageType {
+	switch n.Message.(type) {
+	case TextMessage:
+		return MessageTypeText
+	case VoiceMessage:
+		return MessageTypeVoice
+	case PhotoMessage:
+		return MessageTypePhoto
+	default:
+		panic(fmt.Sprintf("unsupported normalized message type %T", n.Message))
+	}
 }
 
 func ParseUpdate(body []byte) (Update, error) {
@@ -94,7 +140,6 @@ func NormalizeUpdate(u Update) (*NormalizedUpdate, error) {
 		MessageID: msg.MessageID,
 		UserID:    msg.From.ID,
 		UserName:  name,
-		Caption:   msg.Caption,
 	}
 	if msg.ReplyToMessage != nil {
 		n.ReplyToMessageID = msg.ReplyToMessage.MessageID
@@ -102,26 +147,26 @@ func NormalizeUpdate(u Update) (*NormalizedUpdate, error) {
 
 	switch {
 	case msg.Text != "":
-		n.Type = "text"
-		n.Text = msg.Text
+		n.Message = TextMessage{Text: msg.Text}
 		return n, nil
 	case msg.Voice != nil && msg.Voice.FileID != "":
-		n.Type = "voice"
-		n.VoiceFileID = msg.Voice.FileID
-		n.VoiceMimeType = msg.Voice.MimeType
+		n.Message = VoiceMessage{
+			FileID:   msg.Voice.FileID,
+			MimeType: msg.Voice.MimeType,
+		}
 		return n, nil
 	case len(msg.Photo) > 0:
-		n.Type = "photo"
 		largest := msg.Photo[0]
 		for _, p := range msg.Photo[1:] {
 			if p.FileSize > largest.FileSize {
 				largest = p
 			}
 		}
-		n.PhotoFileID = largest.FileID
-		if n.Caption == "" {
-			n.Caption = "what do you see in this image?"
+		caption := msg.Caption
+		if caption == "" {
+			caption = "what do you see in this image?"
 		}
+		n.Message = PhotoMessage{FileID: largest.FileID, Caption: caption}
 		return n, nil
 	default:
 		return nil, nil

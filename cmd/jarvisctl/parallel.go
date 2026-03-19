@@ -19,10 +19,7 @@ func handleParallel(args []string) {
 		cli.Exitf("parallel subcommand required")
 	}
 
-	cfg, err := config.LoadWithOptions(config.LoadOptions{
-		RequireTelegramToken:  false,
-		RequirePhiCredentials: false,
-	})
+	cfg, err := config.LoadMinimal()
 	if err != nil {
 		cli.Exitf("config error: %v", err)
 	}

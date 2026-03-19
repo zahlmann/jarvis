@@ -65,7 +65,7 @@ func handleTelegram(args []string) {
 	if len(args) < 1 {
 		cli.Exitf("telegram subcommand required")
 	}
-	cfg, err := config.LoadWithOptions(config.LoadOptions{RequireTelegramToken: true})
+	cfg, err := config.LoadForTelegramCLI()
 	if err != nil {
 		cli.Exitf("config error: %v", err)
 	}
@@ -237,7 +237,7 @@ func handleSchedule(args []string) {
 	if len(args) < 1 {
 		cli.Exitf("schedule subcommand required")
 	}
-	cfg, err := config.LoadWithOptions(config.LoadOptions{})
+	cfg, err := config.LoadMinimal()
 	if err != nil {
 		cli.Exitf("config error: %v", err)
 	}
@@ -389,9 +389,6 @@ func handleSchedule(args []string) {
 			},
 			logger,
 		)
-		if err := engine.Require(); err != nil {
-			cli.Exitf("run-due setup failed: %v", err)
-		}
 		if err := engine.RunDue(context.Background(), runAt); err != nil {
 			cli.Exitf("run-due execute failed: %v", err)
 		}
@@ -429,10 +426,7 @@ func handleBring(args []string) {
 	if len(args) < 1 {
 		cli.Exitf("bring subcommand required")
 	}
-	if _, err := config.LoadWithOptions(config.LoadOptions{
-		RequireTelegramToken:  false,
-		RequirePhiCredentials: false,
-	}); err != nil {
+	if _, err := config.LoadMinimal(); err != nil {
 		cli.Exitf("config error: %v", err)
 	}
 	output, err := bring.Run(args)
@@ -443,10 +437,7 @@ func handleBring(args []string) {
 }
 
 func handleRecent(args []string) {
-	cfg, err := config.LoadWithOptions(config.LoadOptions{
-		RequireTelegramToken:  false,
-		RequirePhiCredentials: false,
-	})
+	cfg, err := config.LoadMinimal()
 	if err != nil {
 		cli.Exitf("config error: %v", err)
 	}
@@ -484,10 +475,7 @@ func handleMemory(args []string) {
 	if len(args) < 1 {
 		cli.Exitf("memory subcommand required")
 	}
-	cfg, err := config.LoadWithOptions(config.LoadOptions{
-		RequireTelegramToken:  false,
-		RequirePhiCredentials: false,
-	})
+	cfg, err := config.LoadMinimal()
 	if err != nil {
 		cli.Exitf("config error: %v", err)
 	}

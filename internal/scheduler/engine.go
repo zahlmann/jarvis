@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/zahlmann/jarvis-phi/internal/logstore"
@@ -17,6 +16,13 @@ type Engine struct {
 }
 
 func NewEngine(store *Store, handler TriggerHandler, logger *logstore.Store) *Engine {
+	if store == nil {
+		panic("scheduler store is required")
+	}
+	if handler == nil {
+		panic("scheduler handler is required")
+	}
+
 	return &Engine{
 		store:   store,
 		handler: handler,
@@ -25,9 +31,6 @@ func NewEngine(store *Store, handler TriggerHandler, logger *logstore.Store) *En
 }
 
 func (e *Engine) Start(ctx context.Context) {
-	if e == nil {
-		return
-	}
 	go e.run(ctx)
 }
 
@@ -84,14 +87,4 @@ func (e *Engine) run(ctx context.Context) {
 			_ = e.logger.Write("scheduler", "run_due_error", map[string]any{"error": err.Error()})
 		}
 	}
-}
-
-func (e *Engine) Require() error {
-	if e.store == nil {
-		return fmt.Errorf("scheduler store is required")
-	}
-	if e.handler == nil {
-		return fmt.Errorf("scheduler handler is required")
-	}
-	return nil
 }

@@ -105,9 +105,6 @@ func main() {
 		},
 		logger,
 	)
-	if err := engine.Require(); err != nil {
-		log.Fatalf("scheduler config error: %v", err)
-	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -215,13 +212,13 @@ func (a *app) processNormalized(n telegram.NormalizedUpdate) {
 		UserName: n.UserName,
 		Source:   "telegram",
 		ReplyTo:  replyTo,
-		IsVoice:  n.Type == "voice",
 	}
 
-	switch n.Type {
-	case "text":
-		input.Message = n.Text
-	case "voice":
+	switch message := n.Message.(type) {
+	case telegram.TextMessage:
+		input.Message = message.Text
+	case telegram.VoiceMessage:
+		input.IsVoice = true
 		if !a.cfg.TranscriptionEnabled {
 			_ = a.logger.Write("telegram", "voice_transcription_disabled", map[string]any{
 				"chat_id": n.ChatID,
@@ -234,7 +231,7 @@ func (a *app) processNormalized(n telegram.NormalizedUpdate) {
 			}
 			return
 		}
-		data, contentType, err := a.tg.DownloadFile(n.VoiceFileID)
+		data, contentType, err := a.tg.DownloadFile(message.FileID)
 		if err != nil {
 			_ = a.logger.Write("telegram", "voice_download_error", map[string]any{"chat_id": n.ChatID, "error": err.Error()})
 			return
@@ -245,20 +242,20 @@ func (a *app) processNormalized(n telegram.NormalizedUpdate) {
 			return
 		}
 		input.Message = text
-	case "photo":
-		data, contentType, err := a.tg.DownloadFile(n.PhotoFileID)
+	case telegram.PhotoMessage:
+		data, contentType, err := a.tg.DownloadFile(message.FileID)
 		if err != nil {
 			_ = a.logger.Write("telegram", "photo_download_error", map[string]any{"chat_id": n.ChatID, "error": err.Error()})
 			return
 		}
-		input.Message = n.Caption
+		input.Message = message.Caption
 		input.Images = []model.ImageContent{{
 			Type:     model.ContentImage,
 			MIMEType: contentType,
 			Data:     base64.StdEncoding.EncodeToString(data),
 		}}
 	default:
-		return
+		panic(fmt.Sprintf("unsupported normalized message type %T", message))
 	}
 
 	if strings.TrimSpace(input.Message) == "" {
@@ -286,7 +283,7 @@ func (a *app) processNormalized(n telegram.NormalizedUpdate) {
 	_ = a.logger.Write("telegram", "inbound_message", map[string]any{
 		"chat_id":    n.ChatID,
 		"message_id": n.MessageID,
-		"type":       n.Type,
+		"type":       n.Type(),
 		"user":       n.UserName,
 	})
 

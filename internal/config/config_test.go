@@ -7,14 +7,11 @@ import (
 	"testing"
 )
 
-func TestLoadWithOptionsRequiresOpenAIKey(t *testing.T) {
+func TestLoadMinimalRequiresOpenAIKey(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("JARVIS_PHI_DATA_DIR", filepath.Join(t.TempDir(), "data"))
 
-	_, err := LoadWithOptions(LoadOptions{
-		RequireTelegramToken:  false,
-		RequirePhiCredentials: false,
-	})
+	_, err := LoadMinimal()
 	if err == nil {
 		t.Fatalf("expected error when OPENAI_API_KEY is empty")
 	}
@@ -23,24 +20,21 @@ func TestLoadWithOptionsRequiresOpenAIKey(t *testing.T) {
 	}
 }
 
-func TestLoadWithOptionsMemoryEmbeddingModelDefault(t *testing.T) {
+func TestLoadMinimalMemoryEmbeddingModelDefault(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	t.Setenv("JARVIS_PHI_MEMORY_EMBEDDING_MODEL", "")
 	t.Setenv("JARVIS_PHI_DATA_DIR", filepath.Join(t.TempDir(), "data"))
 
-	cfg, err := LoadWithOptions(LoadOptions{
-		RequireTelegramToken:  false,
-		RequirePhiCredentials: false,
-	})
+	cfg, err := LoadMinimal()
 	if err != nil {
-		t.Fatalf("LoadWithOptions failed: %v", err)
+		t.Fatalf("LoadMinimal failed: %v", err)
 	}
 	if cfg.MemoryEmbeddingModel != "text-embedding-3-small" {
 		t.Fatalf("MemoryEmbeddingModel=%q want=%q", cfg.MemoryEmbeddingModel, "text-embedding-3-small")
 	}
 }
 
-func TestLoadWithOptionsDefersChatGPTTokenFileResolutionToPhi(t *testing.T) {
+func TestLoadMinimalDefersChatGPTTokenFileResolutionToPhi(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	mustWriteFile(t, filepath.Join(homeDir, ".phi", "chatgpt_tokens.json"), `{
@@ -53,12 +47,9 @@ func TestLoadWithOptionsDefersChatGPTTokenFileResolutionToPhi(t *testing.T) {
 	t.Setenv("PHI_CHATGPT_ACCOUNT_ID", "")
 	t.Setenv("JARVIS_PHI_DATA_DIR", filepath.Join(t.TempDir(), "data"))
 
-	cfg, err := LoadWithOptions(LoadOptions{
-		RequireTelegramToken:  false,
-		RequirePhiCredentials: false,
-	})
+	cfg, err := LoadMinimal()
 	if err != nil {
-		t.Fatalf("LoadWithOptions failed: %v", err)
+		t.Fatalf("LoadMinimal failed: %v", err)
 	}
 	if cfg.PhiAccessToken != "" {
 		t.Fatalf("PhiAccessToken=%q want empty so phi can resolve fresh credentials", cfg.PhiAccessToken)
@@ -68,7 +59,7 @@ func TestLoadWithOptionsDefersChatGPTTokenFileResolutionToPhi(t *testing.T) {
 	}
 }
 
-func TestLoadWithOptionsPrefersEnvOverChatGPTTokenFile(t *testing.T) {
+func TestLoadMinimalPrefersEnvOverChatGPTTokenFile(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	mustWriteFile(t, filepath.Join(homeDir, ".phi", "chatgpt_tokens.json"), `{
@@ -81,12 +72,9 @@ func TestLoadWithOptionsPrefersEnvOverChatGPTTokenFile(t *testing.T) {
 	t.Setenv("PHI_CHATGPT_ACCOUNT_ID", "env-account")
 	t.Setenv("JARVIS_PHI_DATA_DIR", filepath.Join(t.TempDir(), "data"))
 
-	cfg, err := LoadWithOptions(LoadOptions{
-		RequireTelegramToken:  false,
-		RequirePhiCredentials: false,
-	})
+	cfg, err := LoadMinimal()
 	if err != nil {
-		t.Fatalf("LoadWithOptions failed: %v", err)
+		t.Fatalf("LoadMinimal failed: %v", err)
 	}
 	if cfg.PhiAccessToken != "env-token" {
 		t.Fatalf("PhiAccessToken=%q want=%q", cfg.PhiAccessToken, "env-token")

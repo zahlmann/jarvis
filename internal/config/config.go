@@ -40,19 +40,27 @@ type Config struct {
 	VoiceReplyEnabled    bool
 }
 
-type LoadOptions struct {
-	RequireTelegramToken  bool
-	RequirePhiCredentials bool
-}
+type loadProfile uint8
+
+const (
+	loadProfileServer loadProfile = iota
+	loadProfileTelegramCLI
+	loadProfileMinimal
+)
 
 func Load() (Config, error) {
-	return LoadWithOptions(LoadOptions{
-		RequireTelegramToken:  true,
-		RequirePhiCredentials: true,
-	})
+	return load(loadProfileServer)
 }
 
-func LoadWithOptions(opts LoadOptions) (Config, error) {
+func LoadForTelegramCLI() (Config, error) {
+	return load(loadProfileTelegramCLI)
+}
+
+func LoadMinimal() (Config, error) {
+	return load(loadProfileMinimal)
+}
+
+func load(profile loadProfile) (Config, error) {
 	loadDotEnv(".env")
 
 	cwd, err := os.Getwd()
@@ -133,12 +141,17 @@ func LoadWithOptions(opts LoadOptions) (Config, error) {
 		return Config{}, fmt.Errorf("OPENAI_API_KEY is required")
 	}
 
-	if opts.RequireTelegramToken && cfg.TelegramBotToken == "" {
-		return Config{}, fmt.Errorf("TELEGRAM_BOT_TOKEN is required")
-	}
-
-	if opts.RequirePhiCredentials && cfg.PhiAuthMode == provider.AuthModeOpenAIAPIKey && cfg.PhiAPIKey == "" {
-		return Config{}, fmt.Errorf("OPENAI_API_KEY is required for PHI_AUTH_MODE=openai_api_key")
+	switch profile {
+	case loadProfileServer:
+		if cfg.TelegramBotToken == "" {
+			return Config{}, fmt.Errorf("TELEGRAM_BOT_TOKEN is required")
+		}
+		if cfg.PhiAuthMode == provider.AuthModeOpenAIAPIKey && cfg.PhiAPIKey == "" {
+			return Config{}, fmt.Errorf("OPENAI_API_KEY is required for PHI_AUTH_MODE=openai_api_key")
+		}
+	case loadProfileTelegramCLI, loadProfileMinimal:
+	default:
+		panic(fmt.Sprintf("unsupported config load profile: %d", profile))
 	}
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
